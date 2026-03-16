@@ -115,13 +115,14 @@ for (i in seq_along(remaining_ids)) {
 
     # Download files
     message("  downloading from ", length(unique_links), " link(s)...")
-    if (!is.null(DOWNLOAD_TIMEOUT_SEC)) {
-      setTimeLimit(elapsed = DOWNLOAD_TIMEOUT_SEC, transient = TRUE)
-      on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
-    }
-    osf_file_download(unique_links, download_to = target_dir,
-                      max_download_size = 10e9, max_file_size = NULL)
-    setTimeLimit(elapsed = Inf, transient = FALSE)
+    (function() {
+      if (!is.null(DOWNLOAD_TIMEOUT_SEC)) {
+        setTimeLimit(elapsed = DOWNLOAD_TIMEOUT_SEC, transient = TRUE)
+        on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
+      }
+      osf_file_download(unique_links, download_to = target_dir,
+                        max_download_size = 10e9, max_file_size = NULL)
+    })()
 
     # Verify download worked
     if (!dir.exists(target_dir)) {

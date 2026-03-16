@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Common functions and variables for all scripts
 
-# Get repository root, with fallback for non-git repositories
+# Get repository root.
+# Always derive from the .specify parent directory — the canonical project
+# marker — by navigating three levels up from this file's location
+# (.specify/scripts/bash → .specify/scripts → .specify → project root).
+# Using `git rev-parse --show-toplevel` would return a monorepo parent when
+# .git lives above the actual project directory, producing wrong spec paths.
 get_repo_root() {
-    if git rev-parse --show-toplevel >/dev/null 2>&1; then
-        git rev-parse --show-toplevel
-    else
-        # Fall back to script location for non-git repos
-        local script_dir="$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        (cd "$script_dir/../../.." && pwd)
-    fi
+    local script_dir="$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    (cd "$script_dir/../../.." && pwd)
 }
 
 # Get current branch, with fallback for non-git repositories

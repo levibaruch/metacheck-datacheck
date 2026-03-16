@@ -419,6 +419,24 @@ run_index <- function(paper_id = NA) {
       return(NULL)
     }
 
+    # ── Qualtrics triple-header detection ──────────────────────────────────────
+    # Qualtrics exports inject a human-readable label row (row 1) and an
+    # ImportId JSON row (row 2) before actual participant responses.
+    # Detect by checking if any cell in the second data row contains {"ImportId":
+    is_qualtrics <- nrow(df) > 1 &&
+      any(grepl('{"ImportId":', as.character(df[2, ]), fixed = TRUE))
+
+    if (is_qualtrics) {
+      if (nrow(df) <= 2) {
+        message("  skipping (Qualtrics export with no participant data rows): ",
+                basename(path))
+        return(NULL)
+      }
+      df <- df[-c(1, 2), , drop = FALSE]
+      rownames(df) <- NULL
+      message("  Qualtrics export detected — stripped 2 header rows: ", basename(path))
+    }
+
     sample_vals <- vapply(df, function(col) {
       vals <- as.character(col[!is.na(col)])
       if (length(vals) == 0) "" else paste(head(vals, N_DATA_READ), collapse = " | ")
@@ -509,6 +527,7 @@ run_index <- function(paper_id = NA) {
         source_file          = rel_path,
         filename             = basename(path),
         group                = group,
+        is_qualtrics         = is_qualtrics,
         column_name          = names(df),
         sample_values        = sample_vals,
         col_type             = col_types,
