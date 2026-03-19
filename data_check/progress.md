@@ -1,5 +1,19 @@
 # Progress Log
 
+## 2026-03-19
+
+### Completed ✅
+
+**015** — verbatim-codebook-labels (branch: `015-verbatim-codebook-labels`)
+- Update `CODEBOOK_PARSE_PROMPT` in `2_codebook_label.R` to instruct the LLM to copy label text verbatim from the codebook source rather than paraphrasing or summarising it; add explicit no-rephrase rule and no-fabrication rule for variables without a description
+
+## 2026-03-18
+
+### Completed ✅
+**Fix**
+- Increased LLM call count in codebooks to fully parse pdf's
+
+
 ## 2026-03-18
 
 ### Completed ✅
