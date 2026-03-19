@@ -44,8 +44,8 @@ tests/
 R (base R, no new packages): Follow standard conventions
 
 ## Recent Changes
+- 017-llm-temperature-testing: Added R (base R only — no new packages) + `metacheck` (`llm()`), `ellmer` (temperature via `params`) — both already installed; sweep runner (`run_sweep.R`) + report (`report_sweep.R`); `options(llm_temperature)` for per-run temperature control; `output_dir` param added to `run_index()` and `run_codebook_label()` for output isolation; `sweep_results/<paper_id>/` directory layout; crash-resilient via `sweep_log.csv`
 - 016-pipeline-quality-report: Added R (base R only — no new packages) + `haven`, `readxl`, `jsonlite` — all already present; not needed for this feature (read-only CSV reporting)
-- 016-pipeline-quality-report: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
 - 015-verbatim-codebook-labels: Added R (base R, no new packages) + `metacheck` (`llm()`), `jsonlite` — already presen
 
 

@@ -4,6 +4,19 @@
 
 ### Completed ✅
 
+**017** — llm-temperature-testing (branch: `017-llm-temperature-testing`)
+- Add `run_sweep.R`: CLI tool to run a paper through the full pipeline N times at M temperatures, saving each (temperature, repeat) to an isolated output directory; crash-resilient via `sweep_log.csv` with resume support
+- Add `report_sweep.R`: reports pairwise col_type / label stability per temperature, quality proxies (known-type rate, codebook coverage, non-empty label rate), weighted recommendation, and always writes `sweep_report_YYYY-MM-DD.md`
+- Modify `llm_batch()` in `helper.R` and three standalone `llm()` calls in `helper.R`: read `getOption("llm_temperature")` and pass as `params = list(temperature = X)` when set
+- Add `output_dir = NULL` param to `run_index()` in `0_index.R`: when non-NULL, writes outputs to specified path instead of `paper_output_dir(paper_id)`
+- Add `output_dir = NULL` param to `run_codebook_label()` in `2_codebook_label.R`: same isolation pattern as `run_index()`
+- Add `data_check/sweep_results/` to `.gitignore`
+
+**016** — pipeline-quality-report (branch: `016-pipeline-quality-report`)
+- Add `report_quality.R`: single-script CLI report over `bulk_summary.csv`, `codebook_summary.csv`, per-paper `columns.csv`, and `codebook_coverage.csv`; four sections (bulk overview, col-type distribution, codebook coverage, timing); always writes `quality_report_YYYY-MM-DD.md`
+- N/A for absent codebook file vs 0% for present-but-empty file
+- Add `data_check/quality_report_*.md` to `.gitignore`
+
 **015** — verbatim-codebook-labels (branch: `015-verbatim-codebook-labels`)
 - Update `CODEBOOK_PARSE_PROMPT` in `2_codebook_label.R` to instruct the LLM to copy label text verbatim from the codebook source rather than paraphrasing or summarising it; add explicit no-rephrase rule and no-fabrication rule for variables without a description
 

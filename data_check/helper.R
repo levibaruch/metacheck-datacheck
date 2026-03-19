@@ -306,7 +306,8 @@ llm_batch <- function(paths, system_prompt, user_prefix, key_col, extra_cols,
                           " objects — one per path above. Echo every path character-for-character.",
                           " No truncation. No notes. No text outside the array.")
 
-    raw <- llm(system_prompt = system_prompt, text = chunk_input)
+    llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()
+    raw <- llm(system_prompt = system_prompt, text = chunk_input, params = llm_params)
 
     needed_cols    <- c(key_col, extra_cols)
     chunk_fallback <- as.data.frame(
@@ -580,10 +581,12 @@ parse_codebook <- function(path) {
 
   for (i in seq_len(max_calls)) {
     chunk_text <- paste(chunks[[i]], collapse = "\n")
+    llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()
     raw <- tryCatch(
       llm(system_prompt = CODEBOOK_PARSE_PROMPT,
           text = paste0("Extract all variable definitions from this codebook text:\n\n",
-                        chunk_text)),
+                        chunk_text),
+          params = llm_params),
       error = function(e) {
         warning("LLM codebook parse failed (chunk ", i, " of ", src, "): ",
                 conditionMessage(e))
@@ -724,8 +727,9 @@ match_column_labels <- function(columns_df, codebook_vars_df,
       })
       prompt_body <- paste0("Variables to check:\n",
                             jsonlite::toJSON(batch_input, auto_unbox = TRUE))
+      llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()
       merge_resp <- tryCatch(
-        llm(system_prompt = label_merge_prompt, text = prompt_body),
+        llm(system_prompt = label_merge_prompt, text = prompt_body, params = llm_params),
         error = function(e) {
           warning("LLM label-merge call failed: ", conditionMessage(e))
           list(answer = "[]")
@@ -786,8 +790,9 @@ match_column_labels <- function(columns_df, codebook_vars_df,
         "\n\nCodebook variables (unmatched):\n", var_list
       )
 
+      llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()
       llm_resp <- tryCatch(
-        llm(system_prompt = column_match_prompt, text = prompt_body),
+        llm(system_prompt = column_match_prompt, text = prompt_body, params = llm_params),
         error = function(e) {
           warning("LLM column-matching call failed: ", conditionMessage(e))
           list(answer = "[]")
