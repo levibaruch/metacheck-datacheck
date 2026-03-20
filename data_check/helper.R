@@ -458,7 +458,8 @@ normalize_label <- function(x) {
 
 # Extract plain text from a rich-text or binary codebook file.
 # Returns a single character string (possibly empty) on any failure.
-# Supports: docx (officer), pdf (pdftools), rtf (regex strip), doc/odt (readLines).
+# Supports: docx (officer), pdf (pdftools), rtf (regex strip),
+#           doc (textutil on macOS), odt (unzip + XML strip).
 # officer >= 0.7.0 and pdftools >= 3.0.0 must be installed (both are already present).
 .extract_rich_text <- function(path, ext) {
   tryCatch({
@@ -479,9 +480,38 @@ normalize_label <- function(x) {
         lines <- readLines(path, warn = FALSE)
         .strip_rtf(paste(lines, collapse = "\n"))
       },
-      doc = , odt = {
-        lines <- readLines(path, warn = FALSE)
-        paste(lines, collapse = "\n")
+      doc = {
+        # Legacy binary Word (OLE2) — readLines() produces binary garbage.
+        # Use macOS textutil to convert to plain text; fall back to empty string.
+        if (nzchar(Sys.which("textutil"))) {
+          lines <- system2("textutil", c("-convert", "txt", "-stdout",
+                                         shQuote(path)),
+                           stdout = TRUE, stderr = FALSE)
+          paste(lines, collapse = "\n")
+        } else ""
+      },
+      odt = {
+        # OpenDocument is a ZIP containing content.xml — readLines() returns
+        # binary ZIP noise.  Unzip content.xml and strip XML tags instead.
+        tmp <- tempfile()
+        on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
+        dir.create(tmp)
+        result <- tryCatch({
+          utils::unzip(path, files = "content.xml", exdir = tmp)
+          xml_path <- file.path(tmp, "content.xml")
+          if (!file.exists(xml_path)) return("")
+          raw <- paste(readLines(xml_path, warn = FALSE), collapse = "\n")
+          # Strip XML tags, decode common entities, collapse whitespace
+          txt <- gsub("<[^>]+>", " ", raw)
+          txt <- gsub("&amp;",  "&", txt, fixed = TRUE)
+          txt <- gsub("&lt;",   "<", txt, fixed = TRUE)
+          txt <- gsub("&gt;",   ">", txt, fixed = TRUE)
+          txt <- gsub("&apos;", "'", txt, fixed = TRUE)
+          txt <- gsub("&quot;", '"', txt, fixed = TRUE)
+          txt <- gsub("\\s+",   " ", txt)
+          trimws(txt)
+        }, error = function(e) "")
+        result
       },
       ""  # unknown extension
     )
