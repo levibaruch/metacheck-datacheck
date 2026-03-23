@@ -53,7 +53,7 @@ MULTILEVEL_HEADER_LOOKAHEAD <- 3L
 # Directory names longer than this many words are truncated; spaces → underscores
 MAX_DIR_WORDS   <- 5
 
-XML_DIR <- "./data-raw/psychsci/grobid_0.8.2"
+XML_DIR <- "../data-raw/psychsci/grobid_0.8.2-full"
 
 BADGE_REPOS <- c("tvyxz", "osf.io/tvyxz/", "osf.io/tvyxz")
 
