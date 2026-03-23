@@ -233,9 +233,9 @@ main <- function() {
   cat("   repeats     :", args$repeats, "\n")
   cat("   sweep_dir   :", args$sweep_dir, "\n\n")
 
-  source("pipeline/helper.R")
-  source("pipeline/0_index.R")
-  source("pipeline/2_codebook_label.R")
+  source("data_check/pipeline/helper.R")
+  source("data_check/pipeline/0_index.R")
+  source("data_check/pipeline/2_codebook_label.R")
 
   run_paper_sweep(args$paper_id, args$temperatures, args$repeats, args$sweep_dir)
 }

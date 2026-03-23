@@ -3,7 +3,7 @@
 # Return the per-paper output directory path, creating it if necessary.
 # paper_id must be a character string (leading zeros are meaningful).
 paper_output_dir <- function(paper_id) {
-  dir_path <- file.path("./outputs", paper_id)
+  dir_path <- file.path("./data_check/outputs", paper_id)
   if (!dir.exists(dir_path)) dir.create(dir_path, recursive = TRUE)
   dir_path
 }

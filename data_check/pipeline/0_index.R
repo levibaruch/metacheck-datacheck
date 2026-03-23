@@ -12,15 +12,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 library(metacheck)
-source("pipeline/helper.R")
+source("data_check/pipeline/helper.R")
 
 llm_use(TRUE)
 llm_model("ollama/gpt-oss:20b-cloud")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-DATA_DIR        <- "./data"
-OUTPUT_DIR      <- "./outputs"
+DATA_DIR        <- "./data_check/data"
+OUTPUT_DIR      <- "./data_check/outputs"
 ARCHIVE_EXTS    <- c("zip", "gz", "tar", "tgz", "bz2", "xz")
 # Extension-based type overrides applied after aggregate sentinel expansion.
 # Maps lowercase file extension → definitive type for unambiguous file kinds.
@@ -53,7 +53,7 @@ MULTILEVEL_HEADER_LOOKAHEAD <- 3L
 # Directory names longer than this many words are truncated; spaces → underscores
 MAX_DIR_WORDS   <- 5
 
-XML_DIR <- "../data-raw/psychsci/grobid_0.8.2-full"
+XML_DIR <- "./data-raw/psychsci/grobid_0.8.2-full"
 
 BADGE_REPOS <- c("tvyxz", "osf.io/tvyxz/", "osf.io/tvyxz")
 
