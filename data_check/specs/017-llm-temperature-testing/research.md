@@ -1,112 +1,101 @@
-# Research: LLM Temperature Stability Testing (017)
+# Research: LLM Temperature Stability Testing — Bulk Sweep Extension
 
-**Date**: 2026-03-19
-**Branch**: `017-llm-temperature-testing`
+**Branch**: `017-llm-temperature-testing` | **Date**: 2026-03-20
 
----
+## R1 — Refactor strategy for `run_paper_sweep()`
 
-## Decision 1: How to pass temperature to the LLM
+**Decision**: Extract the per-paper sweep loop from `run_sweep.R::main()` into a standalone function `run_paper_sweep(paper_id, temperatures, repeats, sweep_dir)`. The existing `main()` is reduced to argument parsing + validation + a single call to `run_paper_sweep()`. The bulk runner sources `run_sweep.R` and calls `run_paper_sweep()` directly.
 
-**Decision**: Use `options(llm_temperature = X)` as a process-level setting before each pipeline run, and read it inside `llm_batch()` (and standalone `llm()` calls in `2_codebook_label.R`). Clear the option after each run.
-
-**Rationale**: `llm()` (from metacheck) accepts `params = list(temperature = X)` which is forwarded to `ellmer::params(temperature = X)`. `llm_batch()` in `helper.R` currently calls `llm()` without `params`. The option approach requires changing only `llm_batch()` and the two standalone `llm()` calls in `2_codebook_label.R` — no parameter threading through `run_index()` or `run_codebook_label()`. Verified: `ellmer::params` signature includes `temperature = NULL`.
+**Rationale**: Mirrors the established pattern: `run_0_index_bulk.R` sources `0_index.R` and calls `run_index()`; `run_sweep_bulk.R` sources `run_sweep.R` and calls `run_paper_sweep()`. No logic is duplicated.
 
 **Alternatives considered**:
-- Thread `temperature` as a parameter through `run_index()` → `llm_batch()` → `llm()` — requires touching every llm_batch call site across both scripts; higher blast radius
-- Set temperature globally via `llm_model()` — no global temperature setter in the current API; not feasible without deeper metacheck internals
+- Re-implementing the temperature loop in `run_sweep_bulk.R` — rejected: duplicates `run_one()`, `load_or_create_sweep_log()`, and `append_sweep_log()`, violating Principle IV.
+- Moving all sweep helpers to `helper.R` — rejected: sweep logic is not used by any other pipeline stage. Sourcing `run_sweep.R` achieves reuse without polluting the shared helper.
+
+**Existing functions that require NO changes**: `run_one()`, `load_or_create_sweep_log()`, `append_sweep_log()`, `sweep_run_done()`.
 
 ---
 
-## Decision 2: How to redirect output per sweep run
+## R2 — Grand report per-stage row layout
 
-**Decision**: Add `output_dir = NULL` parameter to `run_index()` and `run_codebook_label()`. When non-NULL, use the provided path directly instead of `paper_output_dir(paper_id)`. Caller must ensure the directory exists.
+**Decision**: Source `report_sweep.R` and call `compute_stability()` + `compute_quality()` per paper. Unpivot to two rows per (paper × temperature):
+- Row 1: `stage = "index"` — stability = `col_type_agreement`; quality = `known_type_rate` only (codebook metrics = NA)
+- Row 2: `stage = "codebook"` — stability = `label_agreement`; quality = `codebook_coverage_rate` + `nonempty_label_rate` (index metrics = NA)
 
-**Rationale**: `paper_output_dir()` in `helper.R` is hardcoded to `./data_check/outputs/<paper_id>`. The sweep needs each (temperature, repeat) to write to an isolated location. Adding one `output_dir` parameter to both entry points is minimal and preserves all existing call sites (they pass `NULL`, falling through to the current behaviour).
+**Rationale**: `compute_stability()` already separates index-stage (`col_type_agreement`) from codebook-stage (`label_agreement`) in a single call. Splitting at the grand report level keeps existing per-paper report logic unchanged.
 
 **Alternatives considered**:
-- Temporarily override `OUTPUT_DIR` global — fragile; not thread-safe; violates encapsulation
-- Copy outputs after each run — wastes I/O; still pollutes `outputs/` with mixed data
+- Re-computing pairwise agreement inside `report_sweep_grand.R` — rejected: duplicates `pairwise_agreement()`, violating Principle IV.
+
+**NA handling**: Papers with no codebook already return `NA` for `label_agreement` and coverage metrics inside the compute functions — no additional handling needed.
 
 ---
 
-## Decision 3: Sweep directory structure
+## R3 — Bulk log resume strategy
 
-**Decision**:
+**Decision**: Single `sweep_bulk_log.csv` at `./data_check/sweep_results/sweep_bulk_log.csv`. Schema:
+
+| Column | Type | Notes |
+|---|---|---|
+| `paper_id` | character | Leading-zero safe |
+| `temperatures` | character | Comma-separated, e.g. `"0,0.3,0.7,1"` |
+| `repeats` | integer | Repeat count used |
+| `n_ok` | integer | Number of runs that completed successfully |
+| `n_failed` | integer | Number of runs that failed |
+| `n_skipped` | integer | Number of runs skipped (already done) |
+| `elapsed_ms` | integer | Wall time for this paper's full sweep |
+| `timestamp` | character | ISO timestamp |
+| `status` | character | Always `"done"` (appended after all runs attempted) |
+
+**Resume logic**: Load `sweep_bulk_log.csv`; extract `paper_id` values as `done_ids`; `setdiff(all_ids, done_ids)` — identical to `run_0_index_bulk.R`.
+
+**Rationale**: A paper is only logged after all its (temperature × repeat) combinations have been attempted. Within-paper resume is handled by the existing per-run `sweep_log.csv`.
+
+**Alternatives considered**:
+- Directory existence as resume signal — rejected: directory is created at the start, so a crash before any runs would still mark the paper as done.
+
+---
+
+## R4 — Paper discovery: XML_DIR
+
+**Confirmed**: `XML_DIR <- "./data-raw/psychsci/grobid_0.8.2"` is defined in `0_index.R` (line 56). `run_sweep_bulk.R` sources `run_sweep.R` which sources `0_index.R`, so `XML_DIR` is available after sourcing — no redefinition needed.
+
+```r
+all_ids <- tools::file_path_sans_ext(
+  list.files(XML_DIR, pattern = "\\.xml$", full.names = FALSE)
+)
 ```
-sweep_results/
-  <paper_id>/
-    sweep_log.csv              # one row per (temp, repeat); always appended
-    temp_0.0/rep_1/            # outputs from run_index + run_codebook_label
-      structure.csv
-      columns.csv
-      labels.csv
-      codebook_coverage.csv
-    temp_0.0/rep_2/
-    temp_0.3/rep_1/
-    ...
-```
 
-**Rationale**: Temperature values are encoded directly in the directory name for human readability. The `sweep_log.csv` is the single source of truth for what has run; its presence is what determines resume behaviour (same as `bulk_summary.csv` for the bulk runner — Principle I applied here).
+---
+
+## R7 — Parallelism for bulk sweep
+
+**Decision**: Sequential processing — one paper at a time, bulk log written after each paper.
+
+**Rationale**: All parallel approaches were attempted and failed on macOS:
+- `mclapply` (fork-based): macOS Objective-C runtime crashes in forked children; additionally, the LLM HTTP client inherits broken connection state from the parent process — all LLM calls fail in forked workers.
+- `parLapply` (PSOCK cluster): `clusterEvalQ` hangs indefinitely during worker initialisation (sourcing pipeline scripts in fresh R processes blocks, likely due to package loading or network calls).
+- Shell background `Rscript` processes: the LLM API rate-limits concurrent requests, eliminating the throughput benefit of parallelism.
+
+Sequential execution with per-paper crash resilience (`sweep_bulk_log.csv` written after every paper, per-run resume via per-paper `sweep_log.csv`) is the correct approach for this workload.
+
+---
+
+## R5 — Script guard pattern
+
+**Confirmed**: New scripts (`run_sweep_bulk.R`, `report_sweep_grand.R`) follow the `run_0_index_bulk.R` pattern — top-level scripts with no `if (!interactive())` guard. They run on source/Rscript execution. Only `run_sweep.R` and `report_sweep.R` use the guard because they are also callable as CLI tools with argument parsing.
+
+---
+
+## R6 — No-data end state
+
+**Decision**: When `run_index()` produces a `columns.csv` with zero rows (no files classified as `data`), `run_one()` treats this as `status = "no_data"` — a successful terminal state distinct from `"ok"` and `"failed"`. The codebook stage is skipped. The result is logged in `sweep_log.csv` with `status = "no_data"` and counts towards `n_ok` in `BulkSweepRecord` (it is not a failure).
+
+**Rationale**: A paper whose OSF repository contains only code, supplemental materials, or assets is a legitimate and common real-world case. Treating it as a failure inflates `n_failed`, pollutes bulk summary statistics, and could trigger unwanted retry logic. Separating it as `no_data` lets consumers filter or aggregate it distinctly in the grand report.
+
+**Detection**: After `run_index()` completes successfully, check whether `columns.csv` exists and has at least 1 data row. If not → `status = "no_data"`. This check must occur inside `run_one()`, after `run_index()` returns, before attempting `run_codebook_label()`.
 
 **Alternatives considered**:
-- Flat directory with encoded filenames (e.g. `columns_t0.0_r1.csv`) — harder to use existing pipeline functions that expect a directory
-- Database/JSON log — over-engineered; CSV is consistent with the rest of the pipeline
-
----
-
-## Decision 4: Resume behaviour
-
-**Decision**: Before starting each (temperature, repeat) combination, check `sweep_log.csv` for an existing row with matching `paper_id`, `temperature`, and `repeat_num`. If found (any status), skip that combination. Researcher must manually delete rows from `sweep_log.csv` to force a re-run.
-
-**Rationale**: Matches the bulk runner's resume pattern (constitution Principle I). Checking for an existing row is simpler and more reliable than checking for file existence in the output directory.
-
-**Alternatives considered**:
-- Only skip on success status — allows auto-retry of failures, but adds complexity and can loop infinitely on systematic failures
-- Check output directory existence — fragile; a partial run may have created the directory without completing it
-
----
-
-## Decision 5: Stability metric (pairwise agreement)
-
-**Decision**: For each pair of repeats at the same temperature, compute fraction of columns where both assigned the same label (exact string match). Mean over all pairs = stability score for that temperature. Computed separately for `col_type` and `codebook_label`.
-
-**Rationale**: Pairwise agreement is the simplest and most interpretable stability metric. Consistent with the spec's definition: "fraction of columns where both runs assigned the same label". For R repeats, there are R*(R-1)/2 pairs.
-
-**Column matching**: Match by `column_name` + `source_file` (since the same column name may appear in multiple data files). Only columns present in both runs are compared; columns unique to one run count as disagreement.
-
-**Alternatives considered**:
-- Entropy-based stability — more sophisticated but harder to interpret without ground truth
-- Agreement with the mode across all repeats — more stable for R>3 but less intuitive
-
----
-
-## Decision 6: Quality proxy metrics
-
-**Decision**: Three proxy metrics per temperature (mean over all repeats):
-1. **Known-type rate**: `sum(col_type != "unknown") / n_cols` per repeat → mean across repeats
-2. **Codebook coverage rate**: from `codebook_coverage.csv`: `n_matched / n_total` → mean across repeats; if no codebook file, mark as NA for all repeats and exclude from recommendation weighting
-3. **Non-empty label rate**: `sum(!is.na(label) & nchar(label) > 0) / n_labelled` from `labels.csv`
-
-**Rationale**: These three proxies are already computed by the existing pipeline outputs and require no new LLM calls. They measure completeness, not correctness — a reasonable proxy when ground truth is unavailable.
-
----
-
-## Decision 7: Recommendation weighting
-
-**Decision**: Combined score = `w_stab * stability_score + w_qual * quality_score` where quality_score = mean of available quality proxies (0–1 scale). Default weights: `w_stab = 0.5, w_qual = 0.5`. Configurable via `--stability-weight` argument (quality weight = 1 - stability_weight).
-
-**Rationale**: Equal default weighting because stability and quality are both important and the researcher can tune via the CLI arg. If codebook is absent, quality_score = known-type rate only (codebook and label metrics excluded).
-
----
-
-## Decision 8: Two scripts vs. one
-
-**Decision**: Two separate scripts: `run_sweep.R` (sweep runner) and `report_sweep.R` (reporting).
-
-**Rationale**: Consistent with the existing pipeline pattern (`run_index_bulk.R` and `report_quality.R` are separate). The sweep can be run once and the report re-run multiple times with different weights without re-running the sweep.
-
----
-
-## Resolved unknowns
-
-All NEEDS CLARIFICATION items from spec resolved. Temperature passthrough uses `options()`; output isolation uses `output_dir` param; sweep uses `sweep_log.csv` for crash-resilient resume.
+- Map to existing `empty_repo` code — rejected: `empty_repo` means no files at all after unpacking; `no_data` means files were found and classified, but none as `data`. These are distinct outcomes.
+- Map to `"ok"` — rejected: callers (bulk runner, grand report) need to distinguish "pipeline ran and produced data" from "pipeline ran but found nothing to measure" to avoid dividing by zero in quality metrics.
+- Map to `"failed"` — rejected: no error occurred; the pipeline completed its work correctly.

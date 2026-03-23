@@ -1,126 +1,125 @@
-# Tasks: LLM Temperature Stability Testing (017)
+# Tasks: LLM Temperature Stability Testing
 
-**Input**: Design documents from `specs/017-llm-temperature-testing/`
-**Prerequisites**: plan.md ✓, spec.md ✓, research.md ✓, data-model.md ✓
+**Input**: Design documents from `/specs/017-llm-temperature-testing/`
+**Prerequisites**: plan.md ✅ spec.md ✅ research.md ✅ data-model.md ✅ contracts/ ✅
 
-**Tests**: No test tasks — not requested in the feature specification.
-
-**Organization**: Tasks are grouped by user story. Phases A–B are foundational (blocking all stories).
-
-## Format: `[ID] [P?] [Story] Description`
-
-- **[P]**: Can run in parallel (independent files/concerns)
-- **[Story]**: User story label (US1–US4)
+**Organization**: Tasks are grouped by user story to enable independent implementation and testing.
 
 ---
 
-## Phase 1: Setup
+## Phase 1: Foundational (Blocking Prerequisites)
 
-**Purpose**: `.gitignore` update and file stubs so subsequent phases have targets to write into.
+**Purpose**: Changes to `run_sweep.R` that BOTH the single-paper runner (US1) and bulk runner (US5) depend on. No user story work can begin until this phase is complete.
 
-- [x] T001 Add `data_check/sweep_results/` to `.gitignore` at `/Volumes/Models/dev/metacheck-datacheck/.gitignore`
-- [x] T002 [P] Create empty stub `data_check/run_sweep.R` with file header comment and `main()` stub
-- [x] T003 [P] Create empty stub `data_check/report_sweep.R` with file header comment and `main()` stub
+**⚠️ CRITICAL**: US1 and US5 both source `run_sweep.R` and call `run_paper_sweep()`. This refactor must land first.
 
----
+- [X] T001 Extract `run_paper_sweep(paper_id, temperatures, repeats, sweep_dir)` from the top-level execution block in `run_sweep.R` so it is a callable function; reduce the top-level block to argument parsing + a single call to `run_paper_sweep()` (research.md R1)
+- [X] T002 Add `no_data` end-state detection inside `run_one()` in `run_sweep.R`: after `run_index()` returns successfully, check whether `columns.csv` exists and has ≥1 data row; if not, set `status = "no_data"`, skip `run_codebook_label()`, and log the result — do NOT treat as `"failed"` (spec.md FR-016, research.md R6)
+- [X] T003 Update `append_sweep_log()` and `load_or_create_sweep_log()` in `run_sweep.R` to accept `"no_data"` as a valid status; `"no_data"` runs MUST be treated as completed for resume purposes (skipped on re-run like `"ok"`); update `run_paper_sweep()` to track `n_no_data` and include in return value
 
-## Phase 2: Foundational — Pipeline Modifications (Blocking Prerequisites)
-
-**Purpose**: Thread temperature and output_dir through the existing pipeline. Must complete before any sweep can run.
-
-**⚠️ CRITICAL**: All US1–US4 phases depend on this phase being complete.
-
-- [x] T004 Modify `llm_batch()` in `data_check/helper.R` — before `raw <- llm(...)` call, add: `llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()`; pass `params = llm_params` to `llm()`; no change to function signature
-- [x] T005 Modify the three standalone `llm()` calls inside `run_codebook_label()` in `data_check/2_codebook_label.R` (label merge prompt ~line 728, column match prompt ~line 790, codebook parse loop ~line 584) — add same `llm_params` pattern before each call and pass `params = llm_params`
-- [x] T006 Add `output_dir = NULL` parameter to `run_index()` in `data_check/0_index.R` — at top of function body add: `eff_dir <- if (!is.null(output_dir)) { dir.create(output_dir, recursive = TRUE, showWarnings = FALSE); output_dir } else paper_output_dir(paper_id)`; replace every `paper_output_dir(paper_id)` call inside `run_index()` with `eff_dir`
-- [x] T007 Add `output_dir = NULL` parameter to `run_codebook_label()` in `data_check/2_codebook_label.R` — same `eff_dir` pattern as T006; replace every `paper_output_dir(paper_id)` call inside `run_codebook_label()` with `eff_dir`
-
-**Checkpoint**: Call `run_index(paper_id = "0956797615620784", output_dir = "/tmp/test_sweep_out")` and confirm outputs land in `/tmp/test_sweep_out/`, not in `outputs/`.
+**Checkpoint**: `run_paper_sweep()` exists and is callable; the CLI entrypoint still works (`Rscript run_sweep.R --paper-id <id> --temperatures 0,0.7 --repeats 2`); `no_data` is a valid log status.
 
 ---
 
-## Phase 3: User Story 1 — Temperature Sweep Runner (Priority: P1) 🎯 MVP
+## Phase 2: User Story 1 — Single Paper Temperature Sweep (Priority: P1) 🎯 MVP
 
-**Goal**: Run a full sweep for one paper at N temperatures × R repeats, saving isolated outputs and a crash-resilient log.
+**Goal**: Researcher can run a full temperature sweep on one paper and get per-(temperature, repeat) outputs plus a sweep log.
 
-**Independent Test**: `Rscript run_sweep.R --paper-id 0956797615620784 --temperatures 0.0,0.3 --repeats 2 --sweep-dir /tmp/test_sweep` → 4 run directories created under `/tmp/test_sweep/0956797615620784/`, `sweep_log.csv` has 4 rows, all with `status == "ok"`.
+**Independent Test**: `Rscript run_sweep.R --paper-id <id> --temperatures 0.0,0.7 --repeats 2 --sweep-dir ./sweep_results` produces 4 output directories under `sweep_results/<paper_id>/temp_*/rep_*/` and a `sweep_log.csv` with 4 rows; re-running skips all 4.
 
-- [x] T008 [US1] Implement `parse_sweep_args()` in `data_check/run_sweep.R` — parse `--paper-id` (required, character), `--temperatures` (comma-sep numerics, default `"0.0,0.3,0.7,1.0"`), `--repeats` (integer ≥ 1, default `3`), `--sweep-dir` (path, default `"./sweep_results"`); validate temperatures in [0, 2] and reject with error if any out of range
-- [x] T009 [US1] Implement `load_or_create_sweep_log(log_path)` in `data_check/run_sweep.R` — if file exists, read with `colClasses = c(paper_id = "character")`; if not, return empty data frame with columns: `paper_id, temperature, repeat_num, output_dir, status, error, elapsed_ms, run_timestamp`
-- [x] T010 [US1] Implement `sweep_run_done(log_df, paper_id, temperature, repeat_num)` helper in `data_check/run_sweep.R` — returns TRUE if matching row exists in log_df
-- [x] T011 [US1] Implement `run_one(paper_id, temperature, repeat_num, sweep_base_dir)` in `data_check/run_sweep.R`:
-  - Build run_dir: `file.path(sweep_base_dir, paper_id, sprintf("temp_%.1f", temperature), sprintf("rep_%d", repeat_num))`
-  - `dir.create(run_dir, recursive = TRUE, showWarnings = FALSE)`
-  - `options(llm_temperature = temperature)`
-  - Call `run_index(paper_id, output_dir = run_dir)` inside `tryCatch`
-  - If index succeeded: call `run_codebook_label(paper_id, output_dir = run_dir)` inside `tryCatch`
-  - `options(llm_temperature = NULL)`
-  - Return list with `status`, `error`, `elapsed_ms`, `run_timestamp`, `output_dir`
-- [x] T012 [US1] Implement `append_sweep_log(log_path, row)` in `data_check/run_sweep.R` — appends one row to `sweep_log.csv`; creates file with header if absent; uses `write.table(..., append = TRUE, col.names = !file.exists(log_path))`
-- [x] T013 [US1] Implement `main()` in `data_check/run_sweep.R` — orchestrate: parse args → source pipeline scripts → for each (temperature, repeat): skip if done, call `run_one`, append log, print progress `[T=X rep Y/R] status (Zs)`; print final summary
-- [x] T014 [US1] Verify resume behaviour in `data_check/run_sweep.R` — add a comment/note confirming that re-running with same args skips all completed combinations (verified by `sweep_run_done()` check)
+- [X] T004 [US1] Verify `run_one()` in `run_sweep.R` correctly sets `options(llm_temperature = temperature)` before each pipeline run and restores state after; confirm isolation between consecutive runs at different temperatures
+- [X] T005 [US1] Validate temperature CLI input in `parse_sweep_args()` in `run_sweep.R`: reject values outside `[0.0, 2.0]`, non-numeric inputs, and empty lists with a descriptive error message (spec.md FR-011)
+- [ ] T006 [US1] Smoke test — happy path: run `Rscript run_sweep.R --paper-id <valid_id> --temperatures 0.0,0.7 --repeats 2 --sweep-dir ./sweep_results`; confirm 4 output dirs created, `sweep_log.csv` has 4 rows, re-running skips all 4 combinations
+- [ ] T007 [US1] Smoke test — no-data path: run sweep on a paper with no data files; confirm `sweep_log.csv` records `status = "no_data"`, no error is raised, codebook stage is not attempted, and re-running skips those rows (spec.md SC-009)
 
-**Checkpoint**: 2 temps × 2 repeats sweep runs end-to-end on a known paper; `sweep_log.csv` has 4 rows; re-running produces no new rows.
+**Checkpoint**: Single-paper sweep is fully functional, resumable, and handles the no-data end state gracefully.
 
 ---
 
-## Phase 4: User Story 2 — Stability Report (Priority: P2)
+## Phase 3: User Story 2 — Stability Report (Priority: P2)
 
-**Goal**: Compute and display pairwise label-agreement rates across repeats per temperature.
+**Goal**: `report_sweep.R` produces per-temperature pairwise label-agreement rates for both pipeline stages (index and codebook).
 
-**Independent Test**: `Rscript report_sweep.R --sweep-dir /tmp/test_sweep/0956797615620784 --sections stability` → table showing col_type agreement per temperature; T=0.0 shows 100% (or near-100%) agreement.
+**Independent Test**: `Rscript report_sweep.R --sweep-dir ./sweep_results/<paper_id>` produces `sweep_report_*.md` with a stability table; temperature 0.0 shows 100% agreement; single-repeat temperatures show a warning.
 
-- [x] T015 [US2] Implement `parse_report_args()` in `data_check/report_sweep.R` — parse `--sweep-dir` (required), `--stability-weight` (numeric 0–1, default `0.5`), `--sections` (comma-sep: `overview,stability,quality,recommendation,all`, default `all`)
-- [x] T016 [US2] Implement `load_run_columns(run_dir)` in `data_check/report_sweep.R` — reads `columns.csv` from a run directory; returns data frame with `column_name, source_file, col_type`; returns NULL if file absent
-- [x] T017 [US2] Implement `load_run_labels(run_dir)` in `data_check/report_sweep.R` — reads `labels.csv` from run directory; returns data frame with `column_name, label`; returns NULL if absent
-- [x] T018 [US2] Implement `pairwise_agreement(df_a, df_b, label_col)` in `data_check/report_sweep.R` — joins two data frames on `(column_name, source_file)`, computes fraction of rows where `label_col` matches; columns in one but not the other count as disagreement (add NA partner rows before joining); returns numeric 0–1
-- [x] T019 [US2] Implement `compute_stability(sweep_log_df, sweep_dir)` in `data_check/report_sweep.R` — for each temperature: load all ok-repeat column and label files; compute all pairwise `col_type` agreement rates and mean them; same for `label` if labels present; return data frame with columns `temperature, col_type_agreement, label_agreement, n_pairs, n_columns_compared`; warn and return NA stability if <2 repeats
-- [x] T020 [US2] Implement `section_stability(stability_df)` in `data_check/report_sweep.R` — print formatted table sorted by `col_type_agreement` descending; warn if any temperature had <2 ok repeats
+- [X] T008 [US2] In `report_sweep.R`, implement (or verify) `compute_stability(sweep_dir, log_df)`: for each temperature load per-run `columns.csv` and compute pairwise col_type agreement; load per-run `labels.csv` and compute pairwise label agreement; return data.frame with columns `temperature`, `col_type_agreement`, `label_agreement`, `repeat_count` (data-model.md StabilityScore)
+- [X] T009 [US2] In `report_sweep.R`, implement `pairwise_agreement(label_vec_a, label_vec_b)`: fraction of positions with exact string match; return NA if either vector is empty or lengths differ
+- [X] T010 [US2] In `report_sweep.R`, implement `section_stability(stability_df)`: render stability table as a markdown section sorted by `col_type_agreement` descending; emit a warning line when `repeat_count < 2` for any temperature (spec.md US2 acceptance scenario 4)
+- [X] T011 [US2] In `report_sweep.R`, handle `no_data` runs in stability computation: exclude rows with `status = "no_data"` from pairwise agreement inputs; do not treat absent output files for `no_data` runs as errors
 
-**Checkpoint**: Stability section prints correctly from a completed sweep directory.
+**Checkpoint**: Stability report section renders correctly; 100% agreement at temperature 0.0 in a deterministic 2-repeat test.
 
 ---
 
-## Phase 5: User Story 3 — Quality Comparison (Priority: P3)
+## Phase 4: User Story 3 — Quality Report (Priority: P3)
 
-**Goal**: Compute and display per-temperature quality proxy metrics (known-type rate, codebook coverage, non-empty label rate).
+**Goal**: `report_sweep.R` adds per-temperature quality proxy metrics (known-type rate, codebook coverage, non-empty label rate).
 
-**Independent Test**: `Rscript report_sweep.R --sweep-dir /tmp/test_sweep/0956797615620784 --sections quality` → table with three proxy metrics per temperature; no crash if codebook absent (shows N/A).
+**Independent Test**: Quality section appears alongside stability section; a paper with no codebook shows N/A for coverage metrics (not 0%); a temperature where all runs are `no_data` shows N/A for all quality metrics.
 
-- [x] T021 [US3] Implement `load_run_coverage(run_dir)` in `data_check/report_sweep.R` — reads `codebook_coverage.csv`; returns data frame or NULL (absent = N/A, not 0%)
-- [x] T022 [US3] Implement `compute_quality(sweep_log_df, sweep_dir)` in `data_check/report_sweep.R` — for each temperature: over ok-repeats, compute mean of (1) known-type rate from `columns.csv`, (2) coverage rate from `codebook_coverage.csv` (NA if absent), (3) non-empty label rate from `labels.csv` (NA if absent); return data frame with `temperature, known_type_rate, codebook_coverage_rate, nonempty_label_rate, n_repeats_used`
-- [x] T023 [US3] Implement `section_quality(quality_df)` in `data_check/report_sweep.R` — print formatted table; display N/A for missing metrics
+- [X] T012 [US3] In `report_sweep.R`, implement (or verify) `compute_quality(sweep_dir, log_df)`: for each temperature compute mean `known_type_rate` from per-run `columns.csv`; compute mean `codebook_coverage_rate` and `nonempty_label_rate` from per-run `codebook_coverage.csv`; return NA for codebook metrics when no codebook exists (data-model.md QualityScore)
+- [X] T013 [US3] In `report_sweep.R`, implement `section_quality(quality_df)`: render quality metrics table; display N/A (not 0%) for papers with no codebook (spec.md US3 acceptance scenario 3)
+- [X] T014 [US3] In `report_sweep.R`, exclude `no_data` runs from quality metric averages; when ALL runs for a temperature are `no_data`, render all quality metrics as N/A for that temperature
 
-**Checkpoint**: Quality section prints correctly; papers without codebook show N/A, not 0%.
-
----
-
-## Phase 6: User Story 4 — Recommendation (Priority: P4)
-
-**Goal**: Produce a single recommended temperature from the combined stability + quality score.
-
-**Independent Test**: `Rscript report_sweep.R --sweep-dir /tmp/test_sweep/0956797615620784 --sections recommendation` → names a single temperature (or tied list) with score breakdown.
-
-- [x] T024 [US4] Implement `compute_recommendation(stability_df, quality_df, w_stab)` in `data_check/report_sweep.R`:
-  - Normalise `col_type_agreement` to [0,1] (already is); use as stability component
-  - Normalise quality metrics: mean of available non-NA proxy metrics per temperature → [0,1] quality score; if all proxies NA, quality = NA
-  - `combined = w_stab * stability + (1 - w_stab) * quality`; if quality is NA, use stability only with a warning
-  - Return data frame sorted by `combined` descending; flag ties (temperatures within 0.001 of top score)
-- [x] T025 [US4] Implement `section_recommendation(rec_df, w_stab)` in `data_check/report_sweep.R` — print winner (or tied list); print score breakdown table; note if <2 temperatures tested
-
-**Checkpoint**: Recommendation names the correct temperature when comparing 4 known temperatures with synthetic data.
+**Checkpoint**: Quality section renders correctly; N/A vs 0% distinction verified on a paper with no codebook.
 
 ---
 
-## Phase 7: Polish & Cross-Cutting Concerns
+## Phase 5: User Story 4 — Temperature Recommendation (Priority: P4)
 
-**Purpose**: Wire all report sections, add mandatory .md output, sweep overview section, end-to-end validation.
+**Goal**: `report_sweep.R` synthesises stability and quality into a single recommended temperature with a configurable weight and score breakdown.
 
-- [x] T026 Implement `section_sweep_overview(sweep_log_df)` in `data_check/report_sweep.R` — print run counts per temperature (attempted/succeeded/failed), total elapsed time, resume status
-- [x] T027 Implement `main()` in `data_check/report_sweep.R` — parse args → load sweep_log.csv → call sections per `active_sections` → capture output + write `sweep_report_YYYY-MM-DD.md` to `--sweep-dir` (same pattern as `report_quality.R`)
-- [x] T028 [P] Verify all CSV reads in `run_sweep.R` and `report_sweep.R` use `colClasses = c(paper_id = "character")` — constitution Principle II audit
-- [x] T029 [P] Verify `options(llm_temperature = NULL)` is always cleared after each run in `run_sweep.R` — including in error/exception paths (use `on.exit(options(llm_temperature = NULL))`)
-- [ ] T030 Run a 2-temperature × 2-repeat sweep on paper `0956797615620784` end-to-end; run `report_sweep.R`; confirm `sweep_report_YYYY-MM-DD.md` is created with all four sections
+**Independent Test**: Full report on a sweep with ≥2 temperatures produces a recommendation section naming one temperature (or documenting a tie) with a visible score table; `--stability-weight 0.8` shifts recommendation toward the more stable temperature.
+
+- [X] T015 [US4] In `report_sweep.R`, implement (or verify) `compute_recommendation(stability_df, quality_df, stability_weight)`: combine normalised stability and quality scores with configurable weight (default `0.5`); return list with `recommended_temperature`, `score_df`, and `is_tie` flag (spec.md FR-007)
+- [X] T016 [US4] In `report_sweep.R`, implement `section_recommendation(rec)`: list tied temperatures when `is_tie = TRUE`; emit warning when only 1 temperature was tested (spec.md US4 acceptance scenarios 2–3)
+- [X] T017 [US4] Wire `--stability-weight` CLI argument in `parse_report_args()` in `report_sweep.R` (default `0.5`); validate it is numeric and in `[0, 1]`
+- [X] T018 [US4] Wire `compute_recommendation()` and `section_recommendation()` into `write_sweep_md_report()` in `report_sweep.R`; run end-to-end on a 2-temperature sweep and confirm the recommended temperature is the one with the higher combined score (spec.md SC-006)
+
+**Checkpoint**: Full per-paper report (`sweep_report_*.md`) includes all four sections: overview, stability, quality, recommendation.
+
+---
+
+## Phase 6: User Story 5 — Bulk Temperature Sweep (Priority: P2)
+
+**Goal**: `run_sweep_bulk.R` sweeps all papers crash-resiliently with paper-level progress logging, `n_no_data` tracking, and resume support.
+
+**Independent Test**: Set `N_PAPERS <- 4`, `N_WORKERS <- 2`, `REPEATS <- 2`; run bulk runner; `sweep_bulk_log.csv` has 4 rows written in 2 batches; re-run confirms all 4 papers are skipped without re-processing (spec.md SC-007).
+
+- [X] T019 [P] [US5] Create/verify `run_sweep_bulk.R` with config block: `TEMPERATURES`, `REPEATS`, `N_PAPERS`, `N_WORKERS` (default `parallel::detectCores() - 1L`), `SWEEP_DIR`, `BULK_LOG`, `SEED`; source `run_sweep.R` (which sources `0_index.R` so `XML_DIR` is available) — matching contract in `contracts/run_sweep_bulk.md`
+- [X] T020 [P] [US5] In `run_sweep_bulk.R`, implement `load_bulk_log(path)`: return data.frame with `BulkSweepRecord` schema (data-model.md) if file exists, or empty data.frame with correct column types if not; always use `colClasses = c(paper_id = "character")` (spec.md FR-008, constitution Principle II)
+- [X] T021 [P] [US5] In `run_sweep_bulk.R`, implement `append_bulk_log(path, row)`: append one `BulkSweepRecord` row to `BULK_LOG` immediately after `run_paper_sweep()` returns; include `n_no_data` field; write after each paper for crash resilience (constitution Principle I)
+- [X] T022 [US5] In `run_sweep_bulk.R`, implement the main loop: discover paper IDs from `XML_DIR`; load `BULK_LOG`; compute `setdiff(all_ids, done_ids)`; apply `SEED` shuffle and `N_PAPERS` cap; split into batches of `N_WORKERS`; for each batch call `parallel::mclapply(batch, run_paper_sweep, TEMPERATURES, REPEATS, SWEEP_DIR, mc.cores = N_WORKERS)`; append all batch result rows to `BULK_LOG` after each batch returns (research.md R3, R4, R7)
+- [X] T023 [US5] In `run_sweep_bulk.R`, extract `n_no_data` from the list returned by `run_paper_sweep()` and store in `BulkSweepRecord`; ensure `n_ok` in the log counts both `"ok"` and `"no_data"` runs (contracts/run_sweep_bulk.md)
+- [ ] T024 [US5] Smoke test: set `N_PAPERS <- 4`, `N_WORKERS <- 2`, `REPEATS <- 2`; run `run_sweep_bulk.R`; confirm `sweep_bulk_log.csv` has 4 rows written across 2 batches; re-run skips all 4 papers; verify `n_no_data` populated correctly
+
+**Checkpoint**: Bulk runner is crash-resilient, resumes correctly, and separates `no_data` from `failed` in the log.
+
+---
+
+## Phase 7: User Story 6 — Grand Cross-Paper Report (Priority: P3)
+
+**Goal**: `report_sweep_grand.R` produces a flat CSV with one row per (paper × temperature × stage) for post-processing; `no_data` runs show NA metrics, not 0%.
+
+**Independent Test**: Run on `sweep_results/` with 2 swept papers × 2 temperatures → output CSV has exactly 8 rows (2 × 2 × 2); status column contains `"ok"` or `"no_data"` but not `"failed"` for a clean sweep (spec.md SC-008).
+
+- [X] T025 [US6] Create/verify `report_sweep_grand.R` with CLI argument parsing for `--sweep-dir` and `--out-csv`; source `report_sweep.R` (gets `compute_stability`, `compute_quality`) and `0_index.R` (gets `XML_DIR`) — matching contract in `contracts/report_sweep_grand.md`
+- [X] T026 [US6] In `report_sweep_grand.R`, implement `build_stage_rows(paper_id, stability_df, quality_df)`: unpivot into two rows per temperature — `stage = "index"` (col_type_agreement + known_type_rate; codebook metrics = NA) and `stage = "codebook"` (label_agreement + coverage metrics; known_type_rate = NA) — matching `GrandReportRow` schema in data-model.md
+- [X] T027 [US6] In `report_sweep_grand.R`, handle `no_data` temperatures in `build_stage_rows()`: when all runs for a temperature are `no_data`, set all metric columns to NA and `status = "no_data"` for both stage rows (not `"failed"`)
+- [X] T028 [US6] In `report_sweep_grand.R`, implement the main loop: for each paper ID from `XML_DIR`, skip papers with no `sweep_log.csv` (count in summary only — do not emit rows for unswept papers); call `compute_stability()` + `compute_quality()` + `build_stage_rows()` for swept papers
+- [X] T029 [US6] In `report_sweep_grand.R`, write flat CSV to `--out-csv` (overwrite if exists); print summary: total papers in `XML_DIR`, papers with sweep data, papers skipped, total rows written
+- [ ] T030 [US6] Verify row-count invariant: for a complete sweep of P papers × T temperatures, output has exactly P × T × 2 rows; validate with a 2-paper × 2-temperature example (spec.md SC-008)
+
+**Checkpoint**: Grand report CSV produced; row count matches P × T × 2 invariant; `no_data` runs show NA metrics.
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
+
+- [X] T031 [P] Update `docs/pipeline.md` entry points table to document `run_sweep_bulk.R` and `report_sweep_grand.R` as new entry points
+- [X] T032 [P] Update `progress.md` with feature 017 completion summary
+- [X] T033 Verify Principle II compliance across all new/modified scripts: every `read.csv()` that loads `paper_id` uses `colClasses = c(paper_id = "character")`
+- [X] T034 Verify Principle I compliance: `sweep_bulk_log.csv` written after each paper, `sweep_log.csv` after each run — never accumulated in memory only
 
 ---
 
@@ -128,72 +127,54 @@
 
 ### Phase Dependencies
 
-- **Setup (Phase 1)**: No dependencies
-- **Foundational (Phase 2)**: Requires Phase 1 — BLOCKS all user stories
-- **US1 (Phase 3)**: Requires Phase 2 — sweep runner needs modified pipeline
-- **US2–US4 (Phases 4–6)**: Require Phase 3 (need a completed sweep directory to read from); can be developed independently of each other using any existing sweep output
-- **Polish (Phase 7)**: Requires all story phases complete
+- **Phase 1 (Foundational)**: No dependencies — start immediately
+- **Phase 2 (US1)**: Requires Phase 1 complete
+- **Phase 3 (US2)**: Requires Phase 1; independent of Phase 2
+- **Phase 4 (US3)**: Requires Phase 3 (builds on same report script)
+- **Phase 5 (US4)**: Requires Phase 4 (wired into same report)
+- **Phase 6 (US5)**: Requires Phase 1; independent of Phases 2–5
+- **Phase 7 (US6)**: Requires Phase 3 (sources `compute_stability`/`compute_quality` from `report_sweep.R`)
+- **Phase 8 (Polish)**: Requires all phases complete
 
-### User Story Dependencies
+### Parallel Opportunities After Phase 1
 
-- **US1**: Depends on Phases 1 + 2 only
-- **US2, US3, US4**: Each depends only on Phase 3 (a sweep directory); they are independent of each other and can be developed in parallel
+| Track | Phases | What it delivers |
+|-------|--------|-----------------|
+| A | 2 (US1) | Per-paper sweep runner — MVP |
+| B | 3 → 4 → 5 (US2 → US3 → US4) | Per-paper report |
+| C | 6 (US5) | Bulk sweep runner |
+
+Phase 7 (US6) starts once Track B reaches Phase 3 completion.
 
 ### Within Each Phase
 
-- T002 and T003 (Phase 1) are parallel — different files
-- T004–T007 (Phase 2) must be sequential — T004 before T005 (both in helper/codebook), T006 before T007 (different files but T007 needs T006's pattern as reference)
-- T015–T020 (Phase 4): T015 first (parse args), then T016–T018 can be parallel (different helpers), then T019 (uses them), then T020
-
----
-
-## Parallel Opportunities
-
-```r
-# Phase 1: stubs are independent files
-T002: create run_sweep.R stub
-T003: create report_sweep.R stub
-
-# Phase 2: helper.R and 0_index.R changes are independent
-T004 (helper.R llm_batch)  ← independent
-T006 (0_index.R output_dir) ← independent
-
-# Phase 4: loader helpers are independent
-T016: load_run_columns    ← independent
-T017: load_run_labels     ← independent
-T021: load_run_coverage   ← independent (belongs to Phase 5 but can be written alongside T016/T017)
-
-# Phase 7: T028 and T029 are independent audits
-```
+- [P]-marked tasks in Phase 6 (T019, T020, T021) operate on different concerns and can be written in parallel
+- T031 and T032 in Phase 8 touch different files
 
 ---
 
 ## Implementation Strategy
 
-### MVP First (User Story 1)
+### MVP (Phases 1–2 only)
 
-1. Phase 1: Setup stubs + .gitignore (T001–T003)
-2. Phase 2: Pipeline modifications (T004–T007) — verify with checkpoint
-3. Phase 3: Sweep runner (T008–T014) — verify end-to-end
-4. **STOP and VALIDATE**: `run_sweep.R` produces 4 isolated output directories with correct data
-5. Add reporting (Phases 4–6) incrementally
+1. Complete Phase 1: foundational `run_sweep.R` refactor
+2. Complete Phase 2: single-paper smoke tests pass
+3. **STOP and VALIDATE**: `Rscript run_sweep.R --paper-id <id> --temperatures 0.0,0.7 --repeats 2` works end-to-end, including no-data path
 
 ### Incremental Delivery
 
-1. Phases 1–2 → pipeline accepts temperature + isolated output_dir
-2. Phase 3 → sweep runner works → MVP
-3. Phase 4 → stability report added
-4. Phase 5 → quality report added
-5. Phase 6 → recommendation added
-6. Phase 7 → full report wired, .md output, end-to-end validated
+1. Phase 1 + 2 → single-paper sweep operational (MVP)
+2. Phase 3 + 4 + 5 → per-paper report complete
+3. Phase 6 → bulk runner operational
+4. Phase 7 → grand cross-paper report
+5. Phase 8 → polish
 
 ---
 
 ## Notes
 
-- Two new files: `data_check/run_sweep.R`, `data_check/report_sweep.R`
-- Three modified files: `data_check/helper.R`, `data_check/0_index.R`, `data_check/2_codebook_label.R`
-- `paper_id` MUST be character everywhere — constitution Principle II
-- `options(llm_temperature)` MUST be cleared via `on.exit()` — T029
-- `sweep_results/` MUST be in `.gitignore` — T001
-- No new R packages; `ellmer::params(temperature = X)` is already available via metacheck dependency
+- `[P]` tasks operate on different files with no blocking dependencies between them
+- `[USn]` label maps each task to the user story it delivers
+- `no_data` is a **success** status — must never appear in `n_failed` counts
+- All `read.csv()` calls loading `paper_id` require `colClasses = c(paper_id = "character")` (Principle II)
+- All bulk/sweep log writes must be incremental — no in-memory accumulation (Principle I)
