@@ -50,8 +50,8 @@ tests/
 R (base R, no new packages): Follow standard conventions
 
 ## Recent Changes
-- 019-fix-index-labelled-stats: Added R (base R only, no new packages) + `haven` (already installed) — source of the labelled type; vctrs (transitively via haven) — source of the precision error on rbind
 - 018-fix-csv-codebook-parsing: Added R (base R, no new packages) + `haven`, `readxl`, `jsonlite` — all already installed; `helper.R` (shared helpers), `2_codebook_label.R` (coverage output)
+- 017-llm-temperature-testing: Added R (base R only — no new packages) + `metacheck` (`llm()`), `haven`, `readxl`, `jsonlite` — all already installed; `helper.R`, `0_index.R`, `2_codebook_label.R` sourced at runtime
 - 017-llm-temperature-testing: Added R (base R only — no new packages) + `metacheck` (`llm()`), `haven`, `readxl`, `jsonlite` — all already installed; `helper.R`, `0_index.R`, `2_codebook_label.R` sourced at runtime
 
 
