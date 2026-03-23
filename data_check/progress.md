@@ -6,7 +6,7 @@
 
 **019** — fix-index-labelled-stats (branch: `019-fix-index-labelled-stats`)
 - Fix `Can't convert from 'value' <labelled<double>> to <labelled<double>> due to loss of precision` error: add `as.numeric()` coercion at `x_comp` assignment in `0_index.R` so haven-labelled type metadata is stripped before statistics computation — prevents vctrs rbind from encountering incompatible label mappings across columns
-- Fix `arguments imply differing number of rows: 0, 1` error: apply defensive `Filter(function(f) nrow(f) > 0, ...)` before both rbind calls in `0_index.R` (stats_mat assembly at line 675; columns_df assembly at line 702)
+- Fix `arguments imply differing number of rows: 0, 1` error: cancel the sentinel mechanism when all files fall into aggregate folders — set `aggregate_df = NULL` and process all paths individually so `non_agg_relpaths` is never empty; the existing 10-call limit still guards runaway repos
 - Remove 3 affected papers (`0956797618772822`, `09567976231158570`, `0956797618773095`) from `bulk_summary.csv` for reprocessing
 
 **018** — fix-csv-codebook-parsing (branch: `018-fix-csv-codebook-parsing`)
