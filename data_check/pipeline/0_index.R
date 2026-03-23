@@ -12,15 +12,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 library(metacheck)
-source("./data_check/helper.R")
+source("pipeline/helper.R")
 
 llm_use(TRUE)
 llm_model("ollama/gpt-oss:20b-cloud")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-DATA_DIR        <- "./data_check/data"
-OUTPUT_DIR      <- "./data_check/outputs"
+DATA_DIR        <- "./data"
+OUTPUT_DIR      <- "./outputs"
 ARCHIVE_EXTS    <- c("zip", "gz", "tar", "tgz", "bz2", "xz")
 # Extension-based type overrides applied after aggregate sentinel expansion.
 # Maps lowercase file extension → definitive type for unambiguous file kinds.

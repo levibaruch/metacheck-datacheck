@@ -117,6 +117,7 @@ run_one <- function(paper_id, temperature, repeat_num, sweep_base_dir) {
   options(llm_temperature = temperature)
 
   index_ok  <- FALSE
+  no_data   <- FALSE
   err_msg   <- NA_character_
 
   tryCatch({
@@ -127,15 +128,28 @@ run_one <- function(paper_id, temperature, repeat_num, sweep_base_dir) {
   })
 
   if (index_ok) {
-    tryCatch({
-      run_codebook_label(paper_id, output_dir = run_dir)
-    }, error = function(e) {
-      err_msg <<- conditionMessage(e)
-    })
+    # no_data end state (FR-016): pipeline ran successfully but produced no data
+    # columns — columns.csv absent or empty.  Skip codebook stage; not a failure.
+    cols_path <- file.path(run_dir, "columns.csv")
+    no_data   <- !file.exists(cols_path) || {
+      cols_df <- tryCatch(
+        read.csv(cols_path, nrows = 1L, stringsAsFactors = FALSE),
+        error = function(e) NULL
+      )
+      is.null(cols_df) || nrow(cols_df) == 0L
+    }
+
+    if (!no_data) {
+      tryCatch({
+        run_codebook_label(paper_id, output_dir = run_dir)
+      }, error = function(e) {
+        err_msg <<- conditionMessage(e)
+      })
+    }
   }
 
   elapsed_ms <- as.integer(round((proc.time()[["elapsed"]] - t_start) * 1000))
-  status     <- if (is.na(err_msg)) "ok" else "failed"
+  status     <- if (!is.na(err_msg)) "failed" else if (no_data) "no_data" else "ok"
 
   list(
     status        = status,
@@ -146,47 +160,38 @@ run_one <- function(paper_id, temperature, repeat_num, sweep_base_dir) {
   )
 }
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Per-paper sweep (callable by bulk runner) ─────────────────────────────────
 
-main <- function() {
-  args <- parse_sweep_args()
-
-  cat("── Temperature sweep ────────────────────────────────────────────────────\n")
-  cat("   paper_id    :", args$paper_id, "\n")
-  cat("   temperatures:", paste(args$temperatures, collapse = ", "), "\n")
-  cat("   repeats     :", args$repeats, "\n")
-  cat("   sweep_dir   :", args$sweep_dir, "\n\n")
-
-  source("./data_check/helper.R")
-  source("./data_check/0_index.R")
-  source("./data_check/2_codebook_label.R")
-
-  paper_sweep_dir <- file.path(args$sweep_dir, args$paper_id)
+run_paper_sweep <- function(paper_id, temperatures, repeats, sweep_dir) {
+  paper_sweep_dir <- file.path(sweep_dir, paper_id)
   dir.create(paper_sweep_dir, recursive = TRUE, showWarnings = FALSE)
   log_path <- file.path(paper_sweep_dir, "sweep_log.csv")
 
   log_df <- load_or_create_sweep_log(log_path)
 
-  n_total  <- length(args$temperatures) * args$repeats
-  n_done   <- 0L
-  n_ok     <- 0L
-  n_failed <- 0L
+  n_total   <- length(temperatures) * repeats
+  n_done    <- 0L
+  n_ok      <- 0L
+  n_no_data <- 0L
+  n_failed  <- 0L
+  n_skipped <- 0L
 
-  for (temp in args$temperatures) {
-    for (rep in seq_len(args$repeats)) {
+  for (temp in temperatures) {
+    for (rep in seq_len(repeats)) {
 
-      if (sweep_run_done(log_df, args$paper_id, temp, rep)) {
+      if (sweep_run_done(log_df, paper_id, temp, rep)) {
         cat(sprintf("[T=%.1f rep %d/%d] skipped (already done)\n",
-                    temp, rep, args$repeats))
-        n_done <- n_done + 1L
+                    temp, rep, repeats))
+        n_done    <- n_done    + 1L
+        n_skipped <- n_skipped + 1L
         next
       }
 
-      cat(sprintf("[T=%.1f rep %d/%d] running...\n", temp, rep, args$repeats))
-      result <- run_one(args$paper_id, temp, rep, args$sweep_dir)
+      cat(sprintf("[T=%.1f rep %d/%d] running...\n", temp, rep, repeats))
+      result <- run_one(paper_id, temp, rep, sweep_dir)
 
       new_row <- data.frame(
-        paper_id      = args$paper_id,
+        paper_id      = paper_id,
         temperature   = temp,
         repeat_num    = rep,
         output_dir    = result$output_dir,
@@ -201,17 +206,38 @@ main <- function() {
 
       elapsed_s <- round(result$elapsed_ms / 1000)
       cat(sprintf("[T=%.1f rep %d/%d] %s (%ds)\n",
-                  temp, rep, args$repeats, result$status, elapsed_s))
+                  temp, rep, repeats, result$status, elapsed_s))
 
       n_done <- n_done + 1L
-      if (result$status == "ok") n_ok <- n_ok + 1L else n_failed <- n_failed + 1L
+      if (result$status %in% c("ok", "no_data")) n_ok <- n_ok + 1L else n_failed <- n_failed + 1L
+      if (result$status == "no_data") n_no_data <- n_no_data + 1L
     }
   }
 
   cat("\n── Sweep complete ───────────────────────────────────────────────────────\n")
-  cat(sprintf("   %d/%d runs completed  |  %d ok  |  %d failed\n",
-              n_done, n_total, n_ok, n_failed))
+  cat(sprintf("   %d/%d runs completed  |  %d ok  |  %d no_data  |  %d failed  |  %d skipped\n",
+              n_done, n_total, n_ok, n_no_data, n_failed, n_skipped))
   cat("   Log:", log_path, "\n")
+
+  invisible(list(n_ok = n_ok, n_no_data = n_no_data, n_failed = n_failed, n_skipped = n_skipped))
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+main <- function() {
+  args <- parse_sweep_args()
+
+  cat("── Temperature sweep ────────────────────────────────────────────────────\n")
+  cat("   paper_id    :", args$paper_id, "\n")
+  cat("   temperatures:", paste(args$temperatures, collapse = ", "), "\n")
+  cat("   repeats     :", args$repeats, "\n")
+  cat("   sweep_dir   :", args$sweep_dir, "\n\n")
+
+  source("pipeline/helper.R")
+  source("pipeline/0_index.R")
+  source("pipeline/2_codebook_label.R")
+
+  run_paper_sweep(args$paper_id, args$temperatures, args$repeats, args$sweep_dir)
 }
 
 # ── Resume behaviour note ─────────────────────────────────────────────────────
@@ -220,4 +246,4 @@ main <- function() {
 # sweep_run_done(). No re-runs occur unless rows are manually deleted from the
 # log (same pattern as run_index_bulk.R / Principle I).
 
-if (!interactive()) main()
+if (!exists("RUN_SWEEP_SOURCED_AS_LIB") && !interactive()) main()

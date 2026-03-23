@@ -5,20 +5,20 @@
 # crashes. On restart, already-completed (or failed) papers are skipped.
 # ─────────────────────────────────────────────────────────────────────────────
 
-source("./data_check/2_codebook_label.R")
+source("pipeline/2_codebook_label.R")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 N_RUNS      <- Inf          # Inf = all eligible papers; set an integer to cap
 SEED        <- NULL         # set an integer for reproducibility, or NULL
-SUMMARY_CSV <- "./data_check/codebook_summary.csv"
+SUMMARY_CSV <- "./results/codebook_summary.csv"
 
 if (!is.null(SEED)) set.seed(SEED)
 
 # ── Discover eligible papers ──────────────────────────────────────────────────
 # A paper is eligible if outputs/<paper_id>/columns.csv exists.
 
-outputs_root <- "./data_check/outputs"
+outputs_root <- "./outputs"
 all_ids <- basename(list.dirs(outputs_root, recursive = FALSE))
 all_ids <- all_ids[all_ids != ""]
 

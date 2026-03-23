@@ -473,4 +473,4 @@ main <- function() {
   write_sweep_md_report(md_sections, args$sweep_dir)
 }
 
-if (!interactive()) main()
+if (!exists("REPORT_SWEEP_SOURCED_AS_LIB") && !interactive()) main()
