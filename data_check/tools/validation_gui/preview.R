@@ -70,23 +70,64 @@ preview_r_object <- function(path, ext) {
 # Used for: pdf, docx
 
 preview_document <- function(path, ext) {
-  tryCatch({
-    setTimeLimit(elapsed = PREVIEW_TIMEOUT_SEC, transient = TRUE)
-    on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
-    text <- if (tolower(ext) == "pdf") {
-      pages <- pdftools::pdf_text(path)
-      paste(pages[seq_len(min(2L, length(pages)))], collapse = "\n")
-    } else {
+  if (tolower(ext) == "pdf") {
+    preview_pdf(path)
+  } else {
+    tryCatch({
+      setTimeLimit(elapsed = PREVIEW_TIMEOUT_SEC, transient = TRUE)
+      on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
       doc  <- officer::read_docx(path)
       summ <- officer::docx_summary(doc)
       rows <- summ[summ$content_type %in% c("paragraph", "table cell"), ]
-      paste(rows$text, collapse = "\n")
-    }
-    substr(trimws(text), 1L, 600L)
-  }, error = function(e) {
-    paste0("[Preview error: ", conditionMessage(e), "]")
-  })
+      substr(trimws(paste(rows$text, collapse = "\n")), 1L, 2000L)
+    }, error = function(e) {
+      paste0("[Preview error: ", conditionMessage(e), "]")
+    })
+  }
 }
+
+# ── PDF preview: text extraction with image fallback for scanned PDFs ─────────
+
+preview_pdf <- function(path) {
+  # 1. Try text extraction (works for text-based PDFs)
+  text <- tryCatch({
+    setTimeLimit(elapsed = PREVIEW_TIMEOUT_SEC, transient = TRUE)
+    on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
+    pages <- pdftools::pdf_text(path)
+    # Collapse runs of spaces (pdftools pads with spaces for column layout)
+    pages <- gsub("[ \t]{2,}", " ", pages)
+    paste(pages[seq_len(min(5L, length(pages)))], collapse = "\n")
+  }, error = function(e) NULL)
+
+  n_chars <- nchar(trimws(text %||% ""))
+
+  if (n_chars >= 80L) {
+    # Enough real text — return it (trim leading/trailing, cap at 3000 chars)
+    return(substr(trimws(text), 1L, 3000L))
+  }
+
+  # 2. Scanned / image-based PDF — render page 1 as inline PNG thumbnail
+  img_tag <- tryCatch({
+    setTimeLimit(elapsed = PREVIEW_TIMEOUT_SEC, transient = TRUE)
+    on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
+    tmp <- tempfile()
+    out <- pdftools::pdf_convert(path, format = "png", pages = 1L,
+                                 dpi = 100L, verbose = FALSE,
+                                 filenames = paste0(tmp, ".png"))
+    on.exit({ if (file.exists(out)) unlink(out) }, add = TRUE)
+    uri <- base64enc::dataURI(file = out, mime = "image/png")
+    htmltools::tags$img(
+      src   = uri,
+      style = "max-width:100%; max-height:420px; border:1px solid #dee2e6; border-radius:4px;"
+    )
+  }, error = function(e) NULL)
+
+  if (!is.null(img_tag)) return(img_tag)
+
+  "[No extractable text — PDF appears to be scanned or image-based. Cannot render preview.]"
+}
+
+`%||%` <- function(a, b) if (is.null(a)) b else a
 
 # ── Image preview tag (T028) ──────────────────────────────────────────────────
 # Used for: jpg, jpeg, png, gif, svg
@@ -338,7 +379,9 @@ render_preview <- function(path, ext) {
 
   # ── Modern Office documents ──────────────────────────────────────────────────
   } else if (ext %in% c("pdf", "docx")) {
-    pre_wrap(preview_document(path, ext))
+    result <- preview_document(path, ext)
+    if (inherits(result, "shiny.tag") || inherits(result, "shiny.tag.list") ||
+        inherits(result, "html")) result else pre_wrap(result)
   } else if (ext == "pptx") {
     pre_wrap(preview_pptx(path))
 

@@ -62,8 +62,12 @@ The GUI reads one paper at a time, selected from a dropdown populated by scannin
 For each paper it loads:
 
 - `outputs/<paper_id>/structure.csv` — machine-generated labels (pre-fills the form)
+- `outputs/<paper_id>/columns.csv` — column names extracted from data files
+  (used to auto-highlight variable names in the paper text panel)
 - `ground_truth/<paper_id>.csv` — ground truth written by the annotator
   (if present, marks already-validated rows and restores their corrections)
+- `/Volumes/Models/expanded_xml/<paper_id>.xml` — GROBID TEI XML for the paper
+  (if present, provides the searchable paper text panel)
 
 ---
 
@@ -74,8 +78,13 @@ Ground truth is a dataset in its own right, entirely separate from pipeline outp
 Base path: `data_check/ground_truth/`
 One file per paper: `ground_truth/<paper_id>.csv`
 
-This directory is checked in to version control alongside the source data (not
-generated, not ignored). It is the primary scientific output of the validation effort.
+> **Note:** `data_check/ground_truth/` is currently listed in `.gitignore` to avoid
+> committing exploratory/tryout annotations. Once annotation is done for real, remove
+> the ignore rule and commit the directory as scientific output.
+
+This directory should eventually be checked in to version control alongside the source
+data (not generated, not ignored). It is the primary scientific output of the validation
+effort.
 
 Schema:
 
@@ -129,6 +138,29 @@ information-dense.
 
 If reading fails for any reason, display the error message in place of the preview —
 never crash.
+
+### Paper text panel (searchable, auto-highlighted)
+
+When a GROBID TEI XML exists for the paper at `/Volumes/Models/expanded_xml/<paper_id>.xml`,
+a collapsible **Paper text** panel is shown above the folder tree. It displays the
+paper's title, abstract, and body text (up to 200 paragraphs).
+
+**Column name auto-highlighting (green)**
+When the panel loads, all unique `column_name` values from
+`outputs/<paper_id>/columns.csv` (≥ 2 chars) are highlighted in green throughout
+the paper text. This makes it easy to spot where the paper defines or references
+its own variables.
+
+**Search (yellow)**
+A search box above the text filters matches in yellow on every keystroke.
+Yellow highlights render on top of green column highlights.
+A match counter (`N matches` / `no matches`) appears in the panel summary line.
+
+Both search and highlighting are **fully client-side** (no Shiny round-trip per
+keystroke). The panel renders once per paper load; only typing triggers JS, not a
+server re-render.
+
+---
 
 ### Folder tree context
 
@@ -273,6 +305,20 @@ No server, no database — all state lives in the ground-truth CSV.
 7. **Keyboard capture in Shiny** requires a small JavaScript snippet injected via
    `tags$script` that listens for `keydown` and calls `Shiny.setInputValue()`.
    This is straightforward and does not require any additional packages.
+
+8. **Paper text search must not be a reactive dependency.** The search input in
+   the paper text panel must use a plain HTML `<input>` with `oninput` calling a
+   JavaScript function (`xmlSetSearch`) directly — not `Shiny.setInputValue`.
+   Making the search value a Shiny reactive input would re-render the full XML
+   panel on every keystroke, freezing the UI for papers with large body text.
+
+9. **Column auto-highlighting is injected via inline `<script>` in `renderUI`.**
+   The column name list is serialised to JSON and passed to `window.xmlSetColumns()`
+   in a `<script>` tag that is part of the `renderUI` output. This ensures the
+   script runs immediately after the DOM is updated, with no timing issues.
+   The `xml_text_content` div stores the raw (HTML-escaped) paper text; JS reads
+   `el.textContent` (which strips any existing mark tags) on each render call to
+   get the clean base text.
 
 ---
 

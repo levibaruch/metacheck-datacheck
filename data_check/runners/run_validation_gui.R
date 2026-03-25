@@ -5,4 +5,4 @@
 #                        source("runners/run_validation_gui.R")
 
 app_dir <- file.path(dirname(sys.frame(1)$ofile), "..", "tools", "validation_gui")
-shiny::runApp(normalizePath(app_dir), launch.browser = TRUE)
+shiny::runApp(normalizePath(app_dir), launch.browser = FALSE)
