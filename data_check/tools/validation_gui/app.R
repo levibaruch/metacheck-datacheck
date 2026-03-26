@@ -498,7 +498,7 @@ ui <- page_sidebar(
         style = "display:flex; align-items:flex-end; gap:12px; margin-top:6px;",
         div(style = "flex:1; min-width:120px; max-width:220px;",
             textInput("group_val", tags$small("Group"), value = "",
-                      placeholder = "ex1, other, na …")),
+                      placeholder = "ex1, shared, na …")),
         div(style = "padding-bottom:7px;",
             checkboxInput("is_raw_val", tags$small("is_raw"), value = FALSE)),
         div(

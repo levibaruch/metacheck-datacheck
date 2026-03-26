@@ -52,7 +52,7 @@ The following hard limits MUST be enforced and MUST NOT be bypassed without expl
 
 - Maximum download size per paper: **10 GB**
 - Maximum data file size for column extraction: **500 MB**
-- Maximum LLM calls per paper (file classification): **10** (i.e., 200 paths at batch size 20)
+- Maximum LLM calls per paper (file classification): **10** (i.e., 300 paths at batch size 30)
 - Maximum LLM calls per paper (column classification): **5** (i.e., 100 columns at batch size 20)
 - Maximum LLM calls per paper (codebook text parsing): **3**
 - Maximum codebook file size: **100 MB** (larger files are skipped silently)
@@ -112,7 +112,7 @@ parsing free-form error messages.
 | Constant | Value | Script | Purpose |
 |---|---|---|---|
 | `OUTPUT_DIR` | `./data_check/outputs` | `0_index.R`, `2_codebook_label.R` | Root for per-paper output subdirectories |
-| `LLM_BATCH_SIZE` | 20 | `0_index.R`, `2_codebook_label.R` | Paths/columns per LLM call |
+| `LLM_BATCH_SIZE` | 30 | `0_index.R`, `2_codebook_label.R` | Paths/columns per LLM call |
 | `N_DATA_READ` | 5 | `0_index.R` | Rows sampled per data file |
 | `MAX_COL_TYPE_LLM_CALLS` | 5 | `0_index.R` | Max LLM calls for column classification |
 | `AGGREGATE_THRESHOLD` | 50 | `0_index.R` | Files per folder above which a sentinel row replaces individual paths |
@@ -179,4 +179,4 @@ require:
 
 All new features MUST be validated against Principles I–V before merging to `main`.
 
-**Version**: 1.1.0 | **Ratified**: TODO(RATIFICATION_DATE): set when first committed to main | **Last Amended**: 2026-03-17
+**Version**: 1.1.1 | **Ratified**: TODO(RATIFICATION_DATE): set when first committed to main | **Last Amended**: 2026-03-26

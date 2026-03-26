@@ -28,7 +28,7 @@ ARCHIVE_EXTS    <- c("zip", "gz", "tar", "tgz", "bz2", "xz")
 # inherited type unchanged.
 AGGREGATE_EXT_OVERRIDE <- c(
   r = "code", rmd = "code", qmd = "code", py = "code", m = "code",
-  do = "code", sps = "code", jl = "code", js = "code", sh = "code",
+  do = "code", sps = "supplemental", jl = "code", js = "code", sh = "code",
   bash = "code", pl = "code", rb = "code", cpp = "code", c = "code",
   h = "code", java = "code", scala = "code", sql = "code",
   jpg = "asset", jpeg = "asset", png = "asset", gif = "asset",
@@ -38,7 +38,7 @@ AGGREGATE_EXT_OVERRIDE <- c(
   csv = "data", sav = "data", dta = "data", sas7bdat = "data",
   xlsx = "data", xls = "data", rds = "data"
 )
-if (!exists("LLM_BATCH_SIZE"))  LLM_BATCH_SIZE  <- 20
+if (!exists("LLM_BATCH_SIZE"))  LLM_BATCH_SIZE  <- 30
 N_DATA_READ     <- 5
 MAX_TOTAL_DATA_MB <- 10 * 1024  # 10 GB total data read cap per paper across all data files
 MAX_FILE_READ_SEC <- 5 * 60    # per-file read timeout (seconds); file is skipped if exceeded
@@ -64,51 +64,72 @@ You will receive a file tree. For each path return a JSON array (same order).
 Each element: {"path": "<exact path>", "type": "<type>", "group": "<group>"}
 
 type — pick one:
-  data         : tabular data file intended for statistical analysis (rows = observations)
-  codebook     : variable descriptions / data dictionary / key
-  code         : analysis or processing script
-  supplemental : supporting materials that are NOT raw data — includes survey
-                 instruments (e.g. .qsf Qualtrics files), questionnaire PDFs,
-                 scale items, consent forms, syntax/output files showing results,
-                 preregistrations, supporting info appendices, saved plot objects
-                 (e.g. .Rdata/.rda files containing ggplot/plot objects), and any
-                 file labelled "supplemental/supporting"
-  doc          : manuscript, report, general notes, project proposals, changelogs
-  readme       : readme file
-  asset        : image, audio, video, stimulus material used in the study
-  other        : anything that does not fit above
+  data         : tabular data file (rows = observations) —
+                 .csv, .sav, .xlsx, .xls, .rds, .rdata, .rda, .dta, .tsv, .dat,
+                 .edf, .acq, .bdf, .mat, .json (survey export), and similar.
+  codebook     : file whose name indicates it describes variables —
+                 "codebook", "variables", "data_dictionary", "variable_list",
+                 "coding_key", or close equivalents in the filename.
+  code         : R (.R), Python (.py), MATLAB (.m), Julia (.jl), SQL (.sql),
+                 shell (.sh, .bash), notebooks (.Rmd, .qmd).
+  supplemental : survey instruments (.qsf), SPSS syntax (.sps), consent forms,
+                 preregistrations, HTML output files, result figures, scale items,
+                 supporting appendices, saved plot objects (.Rdata/.rda with "plot"
+                 or "figure" in the name), experiment scripts (.opensesame, .psyexp),
+                 and any file with "supplemental" or "supporting" in its name.
+  doc          : manuscript, article, report, proposal, or prose notes —
+                 a PDF or DOCX whose name suggests a written research document
+                 (e.g. "manuscript.pdf", "methods.docx", "study_notes.docx").
+  readme       : files named README.*, LICENSE.*, or CONTRIBUTING.*
+  asset        : image, audio, or video stimulus files in folders named "stimuli",
+                 "materials", or similar. Only recognised media formats qualify —
+                 text files, spreadsheets, scripts, and documents are never asset.
+  other        : anything that does not fit the above — .DS_Store, Thumbs.db,
+                 .gitignore, lock files, .env, executables, installers.
+                 MUST NOT be used as a catch-all for ambiguous research files.
 
 group — pick one:
-  "ex<N>"     : belongs to a main numbered experiment/study (e.g. "ex1", "ex2")
-                Infer from folder name OR filename (e.g. "Study 2.csv" → "ex2")
-                If the study has a letter suffix (e.g. "Study 4a", "Experiment 1b"),
-                preserve it exactly: "ex4a", "ex1b". NEVER collapse "4a"/"4b" → "4".
-  "pilot<N>"  : belongs to a pilot study (e.g. "pilot1", "pilot2")
-                Same letter-suffix rule applies: "Pilot 1a" → "pilot1a".
-                Use this whenever the folder or filename contains "pilot", "pre-pilot",
-                "prepilot", or "preliminary study" — even if it also has a number.
-                Number pilots independently from experiments (pilot1, pilot2, …).
-  "other"     : not tied to a specific numbered experiment or pilot (shared files,
-                meta-analyses, previous versions, project proposals, etc.)
-  "na"        : type is readme, asset, supplemental, or other — group not applicable
+  "ex<N>"   : file belongs to a numbered experiment or study. A number is an experiment
+              indicator ONLY when it follows an explicit study/experiment label:
+              - Folder: "Study 1/", "Experiment 2/", "Exp3/", "S1/", "E2/"
+              - Filename: "S1_data.csv" → ex1, "S2_results.csv" → ex2,
+                "S3a_shoppers.csv" → ex3a, "Study_4_data.csv" → ex4,
+                "Experiment2_raw.csv" → ex2
+              Numbers that are NOT experiment indicators: ordinal levels ("1st_Level",
+              "2nd_Level", "3rd_Level"), run numbers ("run1", "run2"), sequential file
+              numbers ("design2", "design3"), subject IDs ("subject-2294"), version
+              numbers, column/folder counts ("3_Column_Format"), analysis levels.
+              Preserve letter suffixes exactly: "S3a" → "ex3a". NEVER collapse "ex3a" → "ex3".
+  "pilot<N>": folder or filename contains "pilot", "pre-pilot", "prepilot", or
+              "preliminary study". Preserve letter suffixes: "Pilot 1a" → "pilot1a".
+              Number pilots independently from experiments.
+  "shared"  : research file not tied to a specific numbered experiment or pilot —
+              combined/merged datasets, project-wide scripts, meta-analyses,
+              proposals, previous versions, archive folders.
+              Use "shared" when no experiment or pilot number can be found in either
+              the folder path or the filename.
+  "na"      : ONLY for type "readme", "asset", or "other".
+              Types "data", "codebook", "code", "supplemental", "doc" MUST NEVER use "na"
+              — even when those files share a folder with asset files.
+              Assets MUST use "na" unless they are clearly tied to a specific numbered
+              experiment (e.g. inside a folder named "Study 1/stimuli/").
 
-Rules:
-- "Supplemental Experiment N" or "Supplemental Study N" folders are NOT main
-  experiments. Files inside them get group "other", NOT "ex<N>".
-  The word "Supplemental" before "Experiment/Study" overrides the number.
-- Pilots are NEVER "ex<N>" — if something is a pilot it is always "pilot<N>".
-- Number pilots and experiments independently: a repo can have ex1, ex2, pilot1.
-- Preserve letter suffixes exactly as written: "4a" stays "4a", never becomes "4".
-- "Previous versions" and archive folders → type of their contents, group "other"
-- Daily training verbatim scripts (e.g. "D23_verbatims.docx") → supplemental
-- Syntax and output files (e.g. SPSS .sps, HTML output) → supplemental
-- Sentinel paths like "[236_files.csv]" represent many identical files in that
-  folder — classify the folder as a whole.
-- You MUST echo back the exact path string provided. NEVER shorten, truncate,
-  or abbreviate paths with "..." or any other placeholder. Every character of
-  every path must appear verbatim in the output.
-- Output ONLY the JSON array. Do not add any notes, comments, or explanatory
-  text before or after the array.'
+Disambiguation:
+- .Rmd and .qmd are ALWAYS code.
+- Files named "design*" (e.g. "design2.txt", "design_matrix.csv") → supplemental, NOT data or asset.
+- Files named "subject-*" or "sub-*" followed by an ID (e.g. "subject-2294_run1_gain.txt")
+  → data, even if the extension is .txt.
+- .rds, .rdata, .rda: classify as data unless the filename clearly indicates a plot or figure.
+- codebook vs doc/supplemental: use the filename. When ambiguous, prefer doc or supplemental.
+- data vs supplemental: tabular files (.csv, .xlsx, etc.) whose name contains "graph",
+  "figure", "plot", or "corrigendum" → supplemental, NOT data.
+- asset vs supplemental: result figures and output graphs → supplemental, NOT asset.
+- Sentinel paths like "[236_files.csv]" represent many identical files — classify the folder as a whole.
+- "Supplemental Experiment N" or "Supplemental Study N" folders → "shared", NOT "ex<N>".
+- Previous versions and archive folders → type of their contents, group "shared".
+- Pilots are NEVER "ex<N>" — always "pilot<N>".
+- Echo back every path exactly as given. NEVER shorten or abbreviate with "...".
+- Output ONLY the JSON array. No notes or text before or after the array.'
 
 COLUMN_TYPE_PROMPT <- 'You are classifying columns in psychology research data.
 For each column descriptor return a JSON array (same order).
@@ -413,14 +434,53 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
          n_llm_calls, " LLM calls (max ", MAX_LLM_CALLS, ")")
   }
 
-  structure_parsed <- llm_batch(
-    paths         = llm_paths,
-    system_prompt = STRUCTURE_PROMPT,
-    user_prefix   = "Classify this repository tree:",
-    key_col       = "path",
-    extra_cols    = c("type", "group"),
-    fallback_vals = list(type = "other", group = "na")
-  )
+  # Build a compact experiment-map summary from prior batch results to pass as
+  # context to subsequent batches, improving cross-batch group label consistency.
+  build_structure_summary <- function(exp_map) {
+    if (length(exp_map) == 0) return("Classify this repository tree:")
+    lines <- vapply(names(exp_map), function(grp) {
+      tokens <- unique(exp_map[[grp]])
+      paste0("- ", grp, ': "', paste(head(tokens, 3L), collapse = '", "'), '"')
+    }, character(1))
+    paste0(
+      "Known experiment structure from prior batches:\n",
+      paste(lines, collapse = "\n"),
+      "\nUse these group assignments to classify the following paths consistently.\n\n",
+      "Classify this repository tree:"
+    )
+  }
+
+  update_experiment_map <- function(exp_map, batch_result) {
+    grp_values <- batch_result$group
+    for (i in seq_along(grp_values)) {
+      grp <- grp_values[i]
+      if (!is.na(grp) && grepl("^(ex|pilot)", grp)) {
+        token <- basename(dirname(batch_result$path[i]))
+        if (nchar(token) == 0 || token == ".") token <- basename(batch_result$path[i])
+        exp_map[[grp]] <- unique(c(exp_map[[grp]], token))
+      }
+    }
+    exp_map
+  }
+
+  chunks         <- split(llm_paths, ceiling(seq_along(llm_paths) / LLM_BATCH_SIZE))
+  experiment_map <- list()
+  structure_parsed <- NULL
+
+  for (i in seq_along(chunks)) {
+    prefix       <- if (i == 1) "Classify this repository tree:" else
+                      build_structure_summary(experiment_map)
+    batch_result <- llm_batch(
+      paths         = chunks[[i]],
+      system_prompt = STRUCTURE_PROMPT,
+      user_prefix   = prefix,
+      key_col       = "path",
+      extra_cols    = c("type", "group"),
+      fallback_vals = list(type = "other", group = "na")
+    )
+    structure_parsed <- rbind(structure_parsed, batch_result)
+    experiment_map   <- update_experiment_map(experiment_map, batch_result)
+  }
 
   # ── 7. Expand sentinels back to individual files ─────────────────────────────
 
@@ -458,7 +518,8 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
       agg_ext  <- tolower(tools::file_ext(agg_expanded_df$rel_path))
       override <- AGGREGATE_EXT_OVERRIDE[agg_ext]
       to_override <- !is.na(override)
-      agg_expanded_df$type[to_override] <- override[to_override]
+      agg_expanded_df$type[to_override]        <- override[to_override]
+      agg_expanded_df$type_source              <- ifelse(to_override, "rule", "llm")
     }
   } else {
     agg_expanded_df <- NULL
@@ -471,6 +532,7 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
     group       = structure_parsed$group[match(non_agg_relpaths, structure_parsed$path)],
     is_raw      = NA,
     is_sentinel = FALSE,
+    type_source = "llm",
     stringsAsFactors = FALSE
   )
 
