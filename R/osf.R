@@ -978,6 +978,12 @@ osf_file_download <- function(osf_id,
     return(NULL)
   }
 
+  ## initialize progress bar ----
+  pb_fn <- pb
+  pb <- pb_fn(NA, "(:spin) :what")
+  pb$tick(0, list(what = "OSF File Download"))
+  on.exit(pb$terminate())
+
   ## iterate ----
   if (length(osf_id) > 1) {
     paste0(
@@ -1090,7 +1096,7 @@ osf_file_download <- function(osf_id,
     dir.create(temppath)
 
     files_to_download <- which(files$kind == "file")
-    pb <- pb(
+    pb <- pb_fn(
       total = length(files_to_download),
       format = "Downloading files [:bar] :current/:total :elapsedfull"
     )
