@@ -501,12 +501,14 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
         extra_cols    = c("type", "group"),
         fallback_vals = list(type = "other", group = "shared")
       )
+      batch_result$prompt_nr <- i
       structure_parsed <- rbind(structure_parsed, batch_result)
       experiment_map   <- update_experiment_map(experiment_map, batch_result)
       type_map         <- update_type_map(type_map, batch_result)
       last_entry       <- batch_result[nrow(batch_result), ]
     }
   }
+  n_phase1_batches <- if (!is.null(structure_parsed)) max(structure_parsed$prompt_nr) else 0L
 
   # ── Phase 2: classify aggregate sub-sentinels with Phase 1 context ─────────
 
@@ -531,7 +533,8 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
         extra_cols    = c("type", "group"),
         fallback_vals = list(type = "other", group = "shared")
       )
-      sentinel_parsed  <- rbind(sentinel_parsed, batch_result)
+      batch_result$prompt_nr <- n_phase1_batches + i
+      sentinel_parsed   <- rbind(sentinel_parsed, batch_result)
       sentinel_type_map <- update_type_map(sentinel_type_map, batch_result)
     }
 
@@ -608,6 +611,7 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
         type_source      = type_source,
         data_granularity = data_gran,
         is_sentinel      = FALSE,
+        prompt_nr        = if ("prompt_nr" %in% names(row)) row$prompt_nr else NA_integer_,
         stringsAsFactors = FALSE
       )
     })
@@ -626,6 +630,10 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
     structure_parsed$group[match(non_agg_relpaths, structure_parsed$path)]
   else
     rep(NA_character_, length(non_agg_relpaths))
+  p1_prompt_nrs <- if (!is.null(structure_parsed))
+    structure_parsed$prompt_nr[match(non_agg_relpaths, structure_parsed$path)]
+  else
+    rep(NA_integer_, length(non_agg_relpaths))
   p1_types[is.na(p1_types)]   <- "other"
   p1_groups[is.na(p1_groups)] <- "shared"
 
@@ -639,6 +647,7 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
     type_source      = "llm",
     data_granularity = ifelse(p1_is_data, "combined", NA_character_),
     is_sentinel      = FALSE,
+    prompt_nr        = p1_prompt_nrs,
     stringsAsFactors = FALSE
   )
 
@@ -939,7 +948,7 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
   write.csv(
     file_df[, c("paper_id", "path", "rel_path", "filename", "ext",
                 "type", "type_source", "group", "aggregate_folder",
-                "data_granularity", "is_sentinel")],
+                "data_granularity", "is_sentinel", "prompt_nr")],
     structure_out, row.names = FALSE
   )
   message("── Saved structure → ", structure_out)
