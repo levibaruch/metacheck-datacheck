@@ -1,17 +1,14 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.1 → 1.1.0 (MINOR — pipeline workflow materially expanded with column
-classification, stats computation, and codebook labelling stages; new shared helper
-`classify_col_type_rules()` added to Principle IV; new entry points and constants documented)
+Version change: 1.1.1 → 1.2.0 (MINOR — Principle IV materially expanded: all LLM prompt
+strings must now live in `prompts.R`; new sourcing rule added to centralisation principle)
 
 Modified principles:
-  - Principle IV (Centralised Shared Helpers): added `classify_col_type_rules()`
+  - Principle IV (Centralised Shared Helpers): added `prompts.R` as the canonical home for
+    all LLM prompt strings; added corresponding no-duplication rule and sourcing requirement
 
-Added sections:
-  - Entry Points sub-section in Pipeline Workflow
-  - Key Constants table in Technical Standards
-  - Steps 4, 7–12 in Pipeline Workflow (file tree, column classification, stats, codebook labelling)
+Added sections: None
 
 Removed sections: None
 
@@ -63,21 +60,32 @@ output CSV (e.g., `too_large`), not a crash or silent omission.
 **Rationale**: Unbounded resource consumption blocks the bulk pipeline and can exhaust disk or
 API quota. Structured error codes allow downstream analysis of failure modes.
 
-### IV. Centralised Shared Helpers
+### IV. Centralised Shared Helpers and Prompts
 
-Logic used by more than one pipeline stage MUST live in `helper.R`. The following capabilities
-MUST NOT be duplicated across pipeline scripts:
+Logic used by more than one pipeline stage MUST live in `helper.R`. All LLM prompt strings MUST
+live in `prompts.R`. The following capabilities MUST NOT be duplicated across pipeline scripts:
 
+**`helper.R`** — shared runtime helpers:
 - File reading: `read_data_head()`
 - Archive unpacking: `unpack_archive()`
 - LLM classification: `llm_batch()`
 - Rule-based file classification: `classify_by_rules()`
 - Rule-based column classification: `classify_col_type_rules()`
 
-New shared utilities MUST be added to `helper.R` and sourced from there.
+**`prompts.R`** — all LLM prompt strings:
+- `STRUCTURE_PROMPT` — file tree classification (used by `0_index.R` → `llm_batch()`)
+- `COLUMN_TYPE_PROMPT` — column type classification (used by `0_index.R` → `llm_batch()`)
+- `CODEBOOK_PARSE_PROMPT` — codebook variable extraction (used by `2_codebook_label.R` → `llm()`)
+- `COLUMN_MATCH_PROMPT` — column–codebook matching (used by `2_codebook_label.R` → `llm()`)
+- `LABEL_MERGE_PROMPT` — label deduplication (used by `2_codebook_label.R` → `llm()`)
 
-**Rationale**: Duplication of download/unpack/LLM logic across scripts caused divergence bugs
-(e.g., retry behaviour for empty folders was missing in the index script before alignment).
+New shared utilities MUST be added to `helper.R` and sourced from there. New LLM prompts MUST
+be defined in `prompts.R` and sourced from there — inline prompt strings in pipeline scripts are
+prohibited.
+
+**Rationale**: Duplication of download/unpack/LLM logic across scripts caused divergence bugs.
+Centralising prompts in `prompts.R` gives a single place to audit, iterate, and version all
+LLM instructions without hunting across pipeline files.
 
 ### V. Structured Error Classification
 
@@ -179,4 +187,4 @@ require:
 
 All new features MUST be validated against Principles I–V before merging to `main`.
 
-**Version**: 1.1.1 | **Ratified**: TODO(RATIFICATION_DATE): set when first committed to main | **Last Amended**: 2026-03-26
+**Version**: 1.2.0 | **Ratified**: TODO(RATIFICATION_DATE): set when first committed to main | **Last Amended**: 2026-03-27

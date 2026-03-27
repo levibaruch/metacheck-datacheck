@@ -36,7 +36,6 @@ ERR_NO_DATA_FILES   <- "no_data_files"
 TYPE_TO_SUBDIR <- list(
   code        = "analysis",
   codebook    = "documentation",
-  doc         = "documentation",
   supplemental = "documentation",
   other       = "documentation",
   asset       = "materials"
@@ -52,9 +51,9 @@ AGGREGATE_EXT_OVERRIDE <- list(
   gif  = "asset", bmp = "asset", tif = "asset", tiff = "asset",
   mp4  = "asset", avi = "asset", mov = "asset", wav = "asset", mp3 = "asset",
   svg  = "asset",
-  pdf  = "doc",
-  docx = "doc", doc = "doc", txt = "doc", rtf = "doc",
-  md   = "doc",
+  pdf  = "supplemental",
+  docx = "supplemental", doc = "supplemental", txt = "supplemental", rtf = "supplemental",
+  md   = "supplemental",
   xlsx = "data", xls = "data",
   csv  = "data", tsv = "data", dat = "data",
   sav  = "data", dta = "data", sas7bdat = "data",
@@ -793,9 +792,13 @@ convert_study <- function(paper_id, study_group, files_df, cols_df, labels_df,
     )
     if (is.null(psychds_path)) next
 
-    # Attempt plaintext extraction for doc/codebook files (US6)
+    # Attempt plaintext extraction for codebook files and narrative supplemental
+    # documents (manuscript, preregistration, thesis, report, etc.)
     txt_info <- NULL
-    if (file_type %in% c("doc", "codebook") &&
+    is_narrative <- grepl(
+      "manuscript|preregistr|registered.report|thesis|dissertation|_report\\.|_report_|report\\.pdf|proposal|protocol",
+      tolower(row$filename), perl = FALSE)
+    if ((file_type == "codebook" || (file_type == "supplemental" && is_narrative)) &&
         tolower(tools::file_ext(row$filename)) %in% c("pdf", "docx", "rtf")) {
       txt_info <- write_doc_txt(row$path, out_dir)
     }

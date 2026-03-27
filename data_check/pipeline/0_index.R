@@ -13,6 +13,7 @@
 
 library(metacheck)
 source("data_check/pipeline/helper.R")
+source("data_check/pipeline/prompts.R")
 
 llm_use(TRUE)
 llm_model("ollama/gpt-oss:20b-cloud")
@@ -58,99 +59,6 @@ MAX_DIR_WORDS   <- 5
 XML_DIR <- "/Volumes/Models/expanded_xml" #"./data-raw/psychsci/grobid_0.8.2-full"
 
 BADGE_REPOS <- c("tvyxz", "osf.io/tvyxz/", "osf.io/tvyxz")
-
-STRUCTURE_PROMPT <- 'You are analysing a psychology research data repository.
-You will receive a file tree. For each path return a JSON array (same order).
-Each element: {"path": "<exact path>", "type": "<type>", "group": "<group>"}
-
-type — pick one:
-  data         : tabular data file (rows = observations) —
-                 .csv, .sav, .xlsx, .xls, .rds, .rdata, .rda, .dta, .tsv, .dat,
-                 .edf, .acq, .bdf, .mat, .json (survey export), and similar.
-  codebook     : file whose name indicates it describes variables —
-                 "codebook", "variables", "data_dictionary", "variable_list",
-                 "coding_key", or close equivalents in the filename.
-  code         : R (.R), Python (.py), MATLAB (.m), Julia (.jl), SQL (.sql),
-                 shell (.sh, .bash), notebooks (.Rmd, .qmd).
-  supplemental : survey instruments (.qsf), SPSS syntax (.sps), consent forms,
-                 preregistrations, HTML output files, result figures, scale items,
-                 supporting appendices, saved plot objects (.Rdata/.rda with "plot"
-                 or "figure" in the name), experiment scripts (.opensesame, .psyexp),
-                 and any file with "supplemental" or "supporting" in its name.
-  doc          : manuscript, article, report, proposal, or prose notes —
-                 a PDF or DOCX whose name suggests a written research document
-                 (e.g. "manuscript.pdf", "methods.docx", "study_notes.docx").
-  readme       : files named README.*, LICENSE.*, or CONTRIBUTING.*
-  asset        : image, audio, or video stimulus files in folders named "stimuli",
-                 "materials", or similar. Only recognised media formats qualify —
-                 text files, spreadsheets, scripts, and documents are never asset.
-  other        : anything that does not fit the above — .DS_Store, Thumbs.db,
-                 .gitignore, lock files, .env, executables, installers.
-                 MUST NOT be used as a catch-all for ambiguous research files.
-
-group — pick one:
-  "ex<N>"   : file belongs to a numbered experiment or study. A number is an experiment
-              indicator ONLY when it follows an explicit study/experiment label:
-              - Folder: "Study 1/", "Experiment 2/", "Exp3/", "S1/", "E2/"
-              - Filename: "S1_data.csv" → ex1, "S2_results.csv" → ex2,
-                "S3a_shoppers.csv" → ex3a, "Study_4_data.csv" → ex4,
-                "Experiment2_raw.csv" → ex2
-              Numbers that are NOT experiment indicators: ordinal levels ("1st_Level",
-              "2nd_Level", "3rd_Level"), run numbers ("run1", "run2"), sequential file
-              numbers ("design2", "design3"), subject IDs ("subject-2294"), version
-              numbers, column/folder counts ("3_Column_Format"), analysis levels.
-              Preserve letter suffixes exactly: "S3a" → "ex3a". NEVER collapse "ex3a" → "ex3".
-  "pilot<N>": folder or filename contains "pilot", "pre-pilot", "prepilot", or
-              "preliminary study". Preserve letter suffixes: "Pilot 1a" → "pilot1a".
-              Number pilots independently from experiments.
-  "shared"  : research file not tied to a specific numbered experiment or pilot —
-              combined/merged datasets, project-wide scripts, meta-analyses,
-              proposals, previous versions, archive folders.
-              Use "shared" when no experiment or pilot number can be found in either
-              the folder path or the filename.
-  "na"      : ONLY for type "readme", "asset", or "other".
-              Types "data", "codebook", "code", "supplemental", "doc" MUST NEVER use "na"
-              — even when those files share a folder with asset files.
-              Assets MUST use "na" unless they are clearly tied to a specific numbered
-              experiment (e.g. inside a folder named "Study 1/stimuli/").
-
-Disambiguation:
-- .Rmd and .qmd are ALWAYS code.
-- Files named "design*" (e.g. "design2.txt", "design_matrix.csv") → supplemental, NOT data or asset.
-- Files named "subject-*" or "sub-*" followed by an ID (e.g. "subject-2294_run1_gain.txt")
-  → data, even if the extension is .txt.
-- .rds, .rdata, .rda: classify as data unless the filename clearly indicates a plot or figure.
-- codebook vs doc/supplemental: use the filename. When ambiguous, prefer doc or supplemental.
-- data vs supplemental: tabular files (.csv, .xlsx, etc.) whose name contains "graph",
-  "figure", "plot", or "corrigendum" → supplemental, NOT data.
-- asset vs supplemental: result figures and output graphs → supplemental, NOT asset.
-- Sentinel paths like "[236_files.csv]" represent many identical files — classify the folder as a whole.
-- "Supplemental Experiment N" or "Supplemental Study N" folders → "shared", NOT "ex<N>".
-- Previous versions and archive folders → type of their contents, group "shared".
-- Pilots are NEVER "ex<N>" — always "pilot<N>".
-- Echo back every path exactly as given. NEVER shorten or abbreviate with "...".
-- Output ONLY the JSON array. No notes or text before or after the array.'
-
-COLUMN_TYPE_PROMPT <- 'You are classifying columns in psychology research data.
-For each column descriptor return a JSON array (same order).
-Each element: {"descriptor": "<exact descriptor>", "col_type": "<type>"}
-
-col_type — pick one:
-  continuous  : numeric measurement — reaction time, age, VAS rating (0–10), Likert-scale
-                mean, subscale score, count, percentage, any column with decimal values
-  ordinal     : ordered integer scale with few levels — 1–5 Likert item, 1–10 attention
-                rating, bounded compliance or distress score, ranked preference, grade
-  categorical : unordered group or category code with few levels (condition, gender, language)
-  binary      : exactly two possible values (yes/no, 0/1, treatment/control)
-  id          : row or participant identifier — unique or nearly-unique integer per row
-  unknown     : ONLY when name AND values together give no numeric signal — e.g. fully
-                redacted data, meaningless all-constant codes. Do NOT use for any column
-                whose samples look like numbers.
-
-IMPORTANT: Prefer "continuous" or "ordinal" over "unknown". When in doubt between
-"continuous" and "ordinal" for a numeric column, choose "continuous".
-
-Output ONLY the JSON array. No notes, no text outside the array.'
 
 # ── Pipeline function ─────────────────────────────────────────────────────────
 
