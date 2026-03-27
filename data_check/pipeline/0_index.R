@@ -384,7 +384,7 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
       user_prefix   = prefix,
       key_col       = "path",
       extra_cols    = c("type", "group"),
-      fallback_vals = list(type = "other", group = "na")
+      fallback_vals = list(type = "other", group = "shared")
     )
     structure_parsed <- rbind(structure_parsed, batch_result)
     experiment_map   <- update_experiment_map(experiment_map, batch_result)

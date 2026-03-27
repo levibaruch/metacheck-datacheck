@@ -38,9 +38,8 @@ One row per file discovered in the paper's OSF repository.
 | Value | Meaning |
 |---|---|
 | `ex<N>` | Main numbered experiment/study (e.g. `ex1`, `ex2`, `ex4a`). Letter suffixes preserved exactly. |
-| `pilot<N>` | Pilot study (e.g. `pilot1`, `pilot1a`). Alphanumeric suffixes preserved exactly (`pilot1a` ≠ `pilot1`). |
-| `shared` | Meaningful research file not tied to a specific numbered experiment or pilot — combined datasets, project-wide scripts, meta-analyses, project proposals, archive folders. |
-| `na` | Group not applicable — **only** for type `readme`, `asset`, or `other`. Types `data`, `codebook`, `code`, `supplemental`, `doc` must use `shared`, `ex<N>`, or `pilot<N>`. |
+| `pilot<N>` | Pilot study (e.g. `pilot1`, `pilot1a`). Alphanumeric suffixes preserved exactly (`pilot1a` ≠ `pilot1`). Unnumbered pilots use `pilot1`. |
+| `shared` | All files not tied to a specific numbered experiment or pilot — combined datasets, project-wide scripts, cross-experiment files, archive folders, and all `readme`, `asset`, and `other` files regardless of location. |
 
 ---
 

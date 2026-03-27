@@ -11,29 +11,42 @@ You will receive a file tree. For each path return a JSON array (same order).
 Each element: {"path": "<exact path>", "type": "<type>", "group": "<group>"}
 
 type — pick one:
-  data         : tabular data file (rows = observations) —
-                 .csv, .sav, .xlsx, .xls, .rds, .rdata, .rda, .dta, .tsv, .dat,
-                 .edf, .acq, .bdf, .mat, .json (survey export), and similar.
+  data         : file containing research measurements — tabular (.csv, .sav, .xlsx,
+                 .xls, .dta, .tsv, .dat) or stored objects (.rds, .rdata, .rda) or
+                 recorded signals (.edf, .acq, .bdf) or matrices (.mat) or .json when
+                 the filename suggests data content (contains "data", "responses",
+                 "results", or "export"). For unlisted extensions, classify as data
+                 only when the filename pattern clearly identifies participant-level
+                 observations (e.g. subject-* files per the disambiguation rule below).
   codebook     : file whose name indicates it describes variables —
-                 "codebook", "variables", "data_dictionary", "variable_list",
-                 "coding_key", or close equivalents in the filename.
+                 "codebook", "data_dictionary", "variable_list", "coding_key",
+                 "variable_key", "var_desc", "data_guide", "labels", "legend",
+                 "metadata" in the filename; or "variables" only when it appears
+                 at the start or end of the filename (e.g. "variables.xlsx",
+                 "study_variables.csv" but NOT "random_variables.csv").
   code         : R (.R), Python (.py), MATLAB (.m), Julia (.jl), SQL (.sql),
-                 shell (.sh, .bash), notebooks (.Rmd, .qmd).
-  supplemental : any research-related document or material that is not data, code,
-                 or a codebook — manuscripts, articles, reports, proposals, theses,
-                 preregistrations, registered reports, survey instruments (.qsf),
-                 SPSS syntax (.sps), consent forms, HTML output files, result figures,
-                 scale items, supporting appendices, saved plot objects (.Rdata/.rda
-                 with "plot" or "figure" in the name), experiment scripts
-                 (.opensesame, .psyexp), and any file with "supplemental" or
-                 "supporting" in its name.
-  readme       : files named README.*, LICENSE.*, or CONTRIBUTING.*
-  asset        : image, audio, or video stimulus files in folders named "stimuli",
-                 "materials", or similar. Only recognised media formats qualify —
-                 text files, spreadsheets, scripts, and documents are never asset.
-  other        : anything that does not fit the above — .DS_Store, Thumbs.db,
-                 .gitignore, lock files, .env, executables, installers.
-                 MUST NOT be used as a catch-all for ambiguous research files.
+                 shell (.sh, .bash), Stata (.do), SAS (.sas), SPSS (.sps),
+                 notebooks (.Rmd, .qmd, .ipynb).
+  supplemental : manuscripts, articles, reports, proposals, theses, preregistrations,
+                 registered reports, survey instruments (.qsf), consent forms,
+                 HTML output files, result figures, scale items, supporting appendices,
+                 experiment scripts (.opensesame, .psyexp).
+  readme       : files named README, LICENSE, or CONTRIBUTING (any capitalisation),
+                 with any extension.
+  asset        : stimulus files in recognised media formats presented to participants.
+                 Recognised formats — image: .jpg, .jpeg, .png, .gif, .bmp, .tif,
+                 .tiff, .svg; audio: .wav, .mp3; video: .mp4, .avi, .mov.
+                 Classify as asset when: (a) the file is inside a folder named
+                 "stimuli", "stim", "materials", "images", "sounds", "audio",
+                 "video", or "pictures"; OR (b) the filename itself contains "stim",
+                 "stimulus", "trial", or "item". Result figures and output graphs are
+                 supplemental, NOT asset. Text, spreadsheet, script, and document
+                 formats are never asset.
+  other        : files with no research content — .DS_Store, Thumbs.db, .gitignore,
+                 lock files, .env, executables, installers. Also: package.json,
+                 dotfiles (names starting with "."), and files ending in "rc.json"
+                 or "config.json". MUST NOT be used as a catch-all for ambiguous
+                 research files.
 
 group — pick one:
   "ex<N>"   : file belongs to a numbered experiment or study. A number is an experiment
@@ -47,34 +60,30 @@ group — pick one:
               numbers ("design2", "design3"), subject IDs ("subject-2294"), version
               numbers, column/folder counts ("3_Column_Format"), analysis levels.
               Preserve letter suffixes exactly: "S3a" → "ex3a". NEVER collapse "ex3a" → "ex3".
-  "pilot<N>": folder or filename contains "pilot", "pre-pilot", "prepilot", or
-              "preliminary study". Preserve letter suffixes: "Pilot 1a" → "pilot1a".
-              Number pilots independently from experiments.
-  "shared"  : research file not tied to a specific numbered experiment or pilot —
-              combined/merged datasets, project-wide scripts, meta-analyses,
-              proposals, previous versions, archive folders.
+  "pilot<N>": context clearly indicates a pilot study — folder or filename contains
+              "pilot", "pre-pilot", "prepilot", or "preliminary study" used to mean
+              a pilot study (NOT when "pilot" is part of an unrelated word such as
+              "autopilot"). Preserve letter suffixes: "Pilot 1a" → "pilot1a". If no
+              number is present, use "pilot1". Number pilots independently from
+              experiments. Pilots are NEVER "ex<N>".
+  "shared"  : all files not tied to a specific numbered experiment or pilot —
+              files spanning multiple experiments, project-wide scripts, combined
+              datasets, files in archive or previous-version folders, and all
+              readme, asset, and other files regardless of location.
               Use "shared" when no experiment or pilot number can be found in either
               the folder path or the filename.
-  "na"      : ONLY for type "readme", "asset", or "other".
-              Types "data", "codebook", "code", "supplemental" MUST NEVER use "na"
-              — even when those files share a folder with asset files.
-              Assets MUST use "na" unless they are clearly tied to a specific numbered
-              experiment (e.g. inside a folder named "Study 1/stimuli/").
 
 Disambiguation:
-- .Rmd and .qmd are ALWAYS code.
-- Files named "design*" (e.g. "design2.txt", "design_matrix.csv") → supplemental, NOT data or asset.
 - Files named "subject-*" or "sub-*" followed by an ID (e.g. "subject-2294_run1_gain.txt")
   → data, even if the extension is .txt.
-- .rds, .rdata, .rda: classify as data unless the filename clearly indicates a plot or figure.
-- codebook vs supplemental: use the filename. When ambiguous, prefer supplemental.
-- data vs supplemental: tabular files (.csv, .xlsx, etc.) whose name contains "graph",
-  "figure", "plot", or "corrigendum" → supplemental, NOT data.
+- .rds, .rdata, .rda: classify as data unless the filename contains "plot", "figure",
+  or "graph", in which case → supplemental.
+- data vs supplemental: tabular files (.csv, .xlsx, .sav, .dta, .tsv, .dat) whose
+  name contains "graph", "figure", "plot", or "corrigendum" → supplemental, NOT data.
 - asset vs supplemental: result figures and output graphs → supplemental, NOT asset.
 - Sentinel paths like "[236_files.csv]" represent many identical files — classify the folder as a whole.
 - "Supplemental Experiment N" or "Supplemental Study N" folders → "shared", NOT "ex<N>".
 - Previous versions and archive folders → type of their contents, group "shared".
-- Pilots are NEVER "ex<N>" — always "pilot<N>".
 - Echo back every path exactly as given. NEVER shorten or abbreviate with "...".
 - Output ONLY the JSON array. No notes or text before or after the array.'
 
