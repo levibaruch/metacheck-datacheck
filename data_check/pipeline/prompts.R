@@ -6,86 +6,146 @@
 
 # ── File structure classification (0_index.R → llm_batch()) ──────────────────
 
-STRUCTURE_PROMPT <- 'You are analysing a psychology research data repository.
+# PREVIOUS VERSION (rule-based) — kept for comparison
+# STRUCTURE_PROMPT <- 'You are analysing a psychology research data repository.
+# You will receive a file tree. For each path return a JSON array (same order).
+# Each element: {"path": "<exact path>", "type": "<type>", "group": "<group>"}
+#
+# type — pick one:
+#   data         : file containing research measurements — tabular (.csv, .sav, .xlsx,
+#                  .xls, .dta, .tsv, .dat) or stored objects (.rds, .rdata, .rda) or
+#                  recorded signals (.edf, .acq, .bdf) or matrices (.mat) or .json when
+#                  the filename suggests data content (contains "data", "responses",
+#                  "results", or "export"). For unlisted extensions, classify as data
+#                  only when the filename pattern clearly identifies participant-level
+#                  observations (e.g. subject-* files per the disambiguation rule below).
+#   codebook     : file whose name indicates it describes variables —
+#                  "codebook", "data_dictionary", "variable_list", "coding_key",
+#                  "variable_key", "var_desc", "data_guide", "labels", "legend",
+#                  "metadata" in the filename; or "variables" only when it appears
+#                  at the start or end of the filename (e.g. "variables.xlsx",
+#                  "study_variables.csv" but NOT "random_variables.csv").
+#   code         : R (.R), Python (.py), MATLAB (.m), Julia (.jl), SQL (.sql),
+#                  shell (.sh, .bash), Stata (.do), SAS (.sas), SPSS (.sps),
+#                  notebooks (.Rmd, .qmd, .ipynb).
+#   supplemental : manuscripts, articles, reports, proposals, theses, preregistrations,
+#                  registered reports, survey instruments (.qsf), consent forms,
+#                  HTML output files, result figures, scale items, supporting appendices,
+#                  experiment scripts (.opensesame, .psyexp).
+#   readme       : files named README, LICENSE, or CONTRIBUTING (any capitalisation),
+#                  with any extension.
+#   asset        : stimulus files in recognised media formats presented to participants.
+#                  Recognised formats — image: .jpg, .jpeg, .png, .gif, .bmp, .tif,
+#                  .tiff, .svg; audio: .wav, .mp3; video: .mp4, .avi, .mov.
+#                  Classify as asset when: (a) the file is inside a folder named
+#                  "stimuli", "stim", "materials", "images", "sounds", "audio",
+#                  "video", or "pictures"; OR (b) the filename itself contains "stim",
+#                  "stimulus", "trial", or "item". Result figures and output graphs are
+#                  supplemental, NOT asset. Text, spreadsheet, script, and document
+#                  formats are never asset.
+#   other        : files with no research content — .DS_Store, Thumbs.db, .gitignore,
+#                  lock files, .env, executables, installers. Also: package.json,
+#                  dotfiles (names starting with "."), and files ending in "rc.json"
+#                  or "config.json". MUST NOT be used as a catch-all for ambiguous
+#                  research files.
+#
+# group — pick one:
+#   "ex<N>"   : file belongs to a numbered experiment or study. A number is an experiment
+#               indicator ONLY when it follows an explicit study/experiment label:
+#               - Folder: "Study 1/", "Experiment 2/", "Exp3/", "S1/", "E2/"
+#               - Filename: "S1_data.csv" → ex1, "S2_results.csv" → ex2,
+#                 "S3a_shoppers.csv" → ex3a, "Study_4_data.csv" → ex4,
+#                 "Experiment2_raw.csv" → ex2
+#               Numbers that are NOT experiment indicators: ordinal levels ("1st_Level",
+#               "2nd_Level", "3rd_Level"), run numbers ("run1", "run2"), sequential file
+#               numbers ("design2", "design3"), subject IDs ("subject-2294"), version
+#               numbers, column/folder counts ("3_Column_Format"), analysis levels.
+#               Preserve letter suffixes exactly: "S3a" → "ex3a". NEVER collapse "ex3a" → "ex3".
+#   "pilot<N>": context clearly indicates a pilot study — folder or filename contains
+#               "pilot", "pre-pilot", "prepilot", or "preliminary study" used to mean
+#               a pilot study (NOT when "pilot" is part of an unrelated word such as
+#               "autopilot"). Preserve letter suffixes: "Pilot 1a" → "pilot1a". If no
+#               number is present, use "pilot1". Number pilots independently from
+#               experiments. Pilots are NEVER "ex<N>".
+#   "shared"  : all files not tied to a specific numbered experiment or pilot —
+#               files spanning multiple experiments, project-wide scripts, combined
+#               datasets, files in archive or previous-version folders, and all
+#               readme, asset, and other files regardless of location.
+#               Use "shared" when no experiment or pilot number can be found in either
+#               the folder path or the filename.
+#
+# Disambiguation:
+# - Files named "subject-*" or "sub-*" followed by an ID (e.g. "subject-2294_run1_gain.txt")
+#   → data, even if the extension is .txt.
+# - .rds, .rdata, .rda: classify as data unless the filename contains "plot", "figure",
+#   or "graph", in which case → supplemental.
+# - data vs supplemental: tabular files (.csv, .xlsx, .sav, .dta, .tsv, .dat) whose
+#   name contains "graph", "figure", "plot", or "corrigendum" → supplemental, NOT data.
+# - asset vs supplemental: result figures and output graphs → supplemental, NOT asset.
+# - Sentinel paths like "[236_files.csv]" represent many identical files — classify the folder as a whole.
+# - "Supplemental Experiment N" or "Supplemental Study N" folders → "shared", NOT "ex<N>".
+# - Previous versions and archive folders → type of their contents, group "shared".
+# - Echo back every path exactly as given. NEVER shorten or abbreviate with "...".
+# - Output ONLY the JSON array. No notes or text before or after the array.'
+
+STRUCTURE_PROMPT <- 'You are classifying files in a psychology research data repository.
 You will receive a file tree. For each path return a JSON array (same order).
 Each element: {"path": "<exact path>", "type": "<type>", "group": "<group>"}
 
-type — pick one:
-  data         : file containing research measurements — tabular (.csv, .sav, .xlsx,
-                 .xls, .dta, .tsv, .dat) or stored objects (.rds, .rdata, .rda) or
-                 recorded signals (.edf, .acq, .bdf) or matrices (.mat) or .json when
-                 the filename suggests data content (contains "data", "responses",
-                 "results", or "export"). For unlisted extensions, classify as data
-                 only when the filename pattern clearly identifies participant-level
-                 observations (e.g. subject-* files per the disambiguation rule below).
-  codebook     : file whose name indicates it describes variables —
-                 "codebook", "data_dictionary", "variable_list", "coding_key",
-                 "variable_key", "var_desc", "data_guide", "labels", "legend",
-                 "metadata" in the filename; or "variables" only when it appears
-                 at the start or end of the filename (e.g. "variables.xlsx",
-                 "study_variables.csv" but NOT "random_variables.csv").
-  code         : R (.R), Python (.py), MATLAB (.m), Julia (.jl), SQL (.sql),
-                 shell (.sh, .bash), Stata (.do), SAS (.sas), SPSS (.sps),
-                 notebooks (.Rmd, .qmd, .ipynb).
-  supplemental : manuscripts, articles, reports, proposals, theses, preregistrations,
-                 registered reports, survey instruments (.qsf), consent forms,
-                 HTML output files, result figures, scale items, supporting appendices,
-                 experiment scripts (.opensesame, .psyexp).
-  readme       : files named README, LICENSE, or CONTRIBUTING (any capitalisation),
-                 with any extension.
-  asset        : stimulus files in recognised media formats presented to participants.
-                 Recognised formats — image: .jpg, .jpeg, .png, .gif, .bmp, .tif,
-                 .tiff, .svg; audio: .wav, .mp3; video: .mp4, .avi, .mov.
-                 Classify as asset when: (a) the file is inside a folder named
-                 "stimuli", "stim", "materials", "images", "sounds", "audio",
-                 "video", or "pictures"; OR (b) the filename itself contains "stim",
-                 "stimulus", "trial", or "item". Result figures and output graphs are
-                 supplemental, NOT asset. Text, spreadsheet, script, and document
-                 formats are never asset.
-  other        : files with no research content — .DS_Store, Thumbs.db, .gitignore,
-                 lock files, .env, executables, installers. Also: package.json,
-                 dotfiles (names starting with "."), and files ending in "rc.json"
-                 or "config.json". MUST NOT be used as a catch-all for ambiguous
-                 research files.
+File organisation varies widely — use the full path and folder context, not just
+the extension, to infer each file\'s purpose.
 
-group — pick one:
-  "ex<N>"   : file belongs to a numbered experiment or study. A number is an experiment
-              indicator ONLY when it follows an explicit study/experiment label:
-              - Folder: "Study 1/", "Experiment 2/", "Exp3/", "S1/", "E2/"
-              - Filename: "S1_data.csv" → ex1, "S2_results.csv" → ex2,
-                "S3a_shoppers.csv" → ex3a, "Study_4_data.csv" → ex4,
-                "Experiment2_raw.csv" → ex2
-              Numbers that are NOT experiment indicators: ordinal levels ("1st_Level",
-              "2nd_Level", "3rd_Level"), run numbers ("run1", "run2"), sequential file
-              numbers ("design2", "design3"), subject IDs ("subject-2294"), version
-              numbers, column/folder counts ("3_Column_Format"), analysis levels.
-              Preserve letter suffixes exactly: "S3a" → "ex3a". NEVER collapse "ex3a" → "ex3".
-  "pilot<N>": context clearly indicates a pilot study — folder or filename contains
-              "pilot", "pre-pilot", "prepilot", or "preliminary study" used to mean
-              a pilot study (NOT when "pilot" is part of an unrelated word such as
-              "autopilot"). Preserve letter suffixes: "Pilot 1a" → "pilot1a". If no
-              number is present, use "pilot1". Number pilots independently from
-              experiments. Pilots are NEVER "ex<N>".
-  "shared"  : all files not tied to a specific numbered experiment or pilot —
-              files spanning multiple experiments, project-wide scripts, combined
-              datasets, files in archive or previous-version folders, and all
-              readme, asset, and other files regardless of location.
-              Use "shared" when no experiment or pilot number can be found in either
-              the folder path or the filename.
+TYPE — what this file is for:
+  data         : contains research measurements — observations, recordings, or
+                 matrices intended for analysis. The extension alone is not
+                 sufficient: a .csv or .xlsx may be a codebook, a .txt may be
+                 participant data. Judge from the filename and folder context.
+  codebook     : primary purpose is describing what variables mean. Identified by
+                 filename keywords: codebook, data_dictionary, variable_list,
+                 coding_key, variable_key, var_desc, data_guide, labels, legend,
+                 metadata; or "variables" at the start or end of the filename.
+                 A codebook can be any format — .csv, .xlsx, .pdf, .docx, .txt.
+  code         : executable source file or notebook — scripts, syntax files,
+                 notebooks (.Rmd, .qmd, .ipynb), regardless of language.
+  supplemental : research support material that is not data, code, or a codebook —
+                 manuscripts, preregistrations, instruments, consent forms, output
+                 figures, appendices, experiment scripts.
+  readme       : file named README, LICENSE, or CONTRIBUTING (any capitalisation).
+  asset        : stimulus media presented to participants during the study —
+                 image, audio, or video files. Output figures → supplemental.
+  other        : no research content — OS metadata, config files, lock files,
+                 executables. Not a catch-all for ambiguous research files.
 
-Disambiguation:
-- Files named "subject-*" or "sub-*" followed by an ID (e.g. "subject-2294_run1_gain.txt")
-  → data, even if the extension is .txt.
-- .rds, .rdata, .rda: classify as data unless the filename contains "plot", "figure",
-  or "graph", in which case → supplemental.
-- data vs supplemental: tabular files (.csv, .xlsx, .sav, .dta, .tsv, .dat) whose
-  name contains "graph", "figure", "plot", or "corrigendum" → supplemental, NOT data.
-- asset vs supplemental: result figures and output graphs → supplemental, NOT asset.
-- Sentinel paths like "[236_files.csv]" represent many identical files — classify the folder as a whole.
-- "Supplemental Experiment N" or "Supplemental Study N" folders → "shared", NOT "ex<N>".
-- Previous versions and archive folders → type of their contents, group "shared".
-- Echo back every path exactly as given. NEVER shorten or abbreviate with "...".
-- Output ONLY the JSON array. No notes or text before or after the array.'
+GROUP — which experiment this file belongs to:
+  "ex<N>"   : clearly tied to a numbered experiment or study.
+              The number must follow an explicit experiment label in the folder
+              path or filename — "Study 1/", "Experiment 2/", "S1_data.csv",
+              "Exp3/", "E2/". Preserve letter suffixes exactly: "S3a" → "ex3a".
+              Numbers that are NOT experiment indicators: run numbers ("run1"),
+              subject IDs ("subject-2294"), version numbers, ordinal levels
+              ("1st_Level"), sequential counts ("3_Column_Format").
+  "pilot<N>": context clearly indicates a pilot study. No number present → "pilot1".
+              Pilots are never "ex<N>".
+  "shared"  : everything else — files not tied to a specific numbered experiment
+              or pilot. Use for cross-experiment files, project-wide scripts,
+              combined datasets, archive folders, and all readme/asset/other files.
+
+Hard cases — use filename and folder context to decide:
+- .csv/.xlsx/.txt/.pdf can each be data OR codebook OR supplemental. The filename
+  is the primary signal: measurement-oriented names → data; variable-description
+  names → codebook; document-oriented names → supplemental.
+- subject-* or sub-* files (e.g. "subject-2294_run1.txt") → always data.
+- .rds/.rdata/.rda → data unless filename contains "plot", "figure", or "graph".
+- .json → data if filename suggests measurements; other if it looks like config
+  (package.json, dotfiles, *rc.json, *config.json).
+- .spv → supplemental (SPSS Viewer output file, NOT code — .sps is code, .spv is not).
+- Images/audio/video → asset if inside a stimuli/stim/materials/sounds/images
+  folder or filename contains "stim", "stimulus", "trial", or "item"; otherwise
+  supplemental.
+- "Supplemental Experiment N" or "Supplemental Study N" folders → group "shared".
+- Archive and previous-version folders → type of contents, group "shared".
+
+Echo every path exactly. Output ONLY the JSON array.'
 
 # ── Column type classification (0_index.R → llm_batch()) ─────────────────────
 
