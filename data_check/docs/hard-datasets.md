@@ -43,11 +43,11 @@ Numeric data using `,` as decimal separator instead of `.`. Rule-based detection
 
 ### 3. Per-participant file structure (one file per subject)
 
-Repos where each participant has their own `.dat` or `.csv` file. Sentinel detection and `is_raw` flagging must handle these correctly.
+Repos where each participant has their own `.dat` or `.csv` file. Sentinel detection and compression must handle these correctly.
 
 | paper_id | what makes it hard |
 |---|---|
-| `0956797614547916` | 142 `.dat` files (one per participant × 2 experiments); all columns parse as `text`; filenames encode experimental metadata (e.g. `Exp1_1.dat`); `is_raw=TRUE` for non-sentinel files |
+| `0956797614547916` | 142 `.dat` files (one per participant × 8 experiments); all columns parse as `text`; filenames encode experimental metadata (e.g. `Exp1_1.dat`) |
 
 ---
 
