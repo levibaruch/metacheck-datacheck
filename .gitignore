@@ -37,4 +37,5 @@ data_check/psychds/*.csv
 
 ./output
 data_check/_old/
+data_check/logs/
 ._*
