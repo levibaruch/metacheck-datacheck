@@ -121,7 +121,7 @@ TYPE — what this file is for:
                  forms, survey scales, appendices. Script-generated artefacts
                  (figures, rendered notebooks) → output, not supplemental.
                  Fallback for ambiguous provenance.
-  readme       : file named README, LICENSE, or CONTRIBUTING (any capitalisation).
+  readme       : file named or contains README (any capitalisation).
   asset        : stimulus media presented to participants during the study —
                  image, audio, or video files.
   other        : no research content — OS metadata, config files, lock files,

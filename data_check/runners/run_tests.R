@@ -71,12 +71,26 @@ generate_report <- function() {
   log_all    <- read.csv(TEST_LOG_PATH,
                          colClasses       = c(paper_id = "character"),
                          stringsAsFactors = FALSE)
-  latest_run <- tail(sort(unique(log_all$run_id)), 1)
-  run_log    <- log_all[log_all$run_id == latest_run, ]
+  latest_run <- if (nrow(log_all) > 0) tail(sort(unique(log_all$run_id)), 1) else "—"
 
   papers_df    <- read.csv(file.path(TEST_DIR, "test_papers.csv"),
                            colClasses = c(id = "character"), stringsAsFactors = FALSE)
   paper_labels <- setNames(papers_df$label, papers_df$id)
+
+  # Build run_log: most recent entry per paper (across all runs).
+  # Papers never run get an all-NA placeholder row so the report lists them.
+  run_log <- do.call(rbind, lapply(papers_df$id, function(pid) {
+    rows <- log_all[log_all$paper_id == pid, ]
+    if (nrow(rows) == 0) {
+      r <- as.data.frame(
+        setNames(as.list(rep(NA_character_, ncol(log_all))), names(log_all)),
+        stringsAsFactors = FALSE
+      )
+      r$paper_id <- pid
+      return(r)
+    }
+    rows[tail(order(rows$run_id), 1L), , drop = FALSE]
+  }))
 
   short_label <- function(pid) {
     lbl <- paper_labels[pid]
@@ -113,8 +127,8 @@ generate_report <- function() {
 
   L("# Test Report — ", date_str)
   BR()
-  L("**Run:** `", latest_run, "`  |  **Papers:** ", n_papers,
-    "  |  **Generated:** ", now_str)
+  L("**Latest run:** `", latest_run, "`  |  **Papers:** ", n_papers,
+    " (most recent result per paper)  |  **Generated:** ", now_str)
   BR()
   L("---")
   BR()
@@ -396,7 +410,7 @@ generate_report <- function() {
       ct_lbl <- do.call(rbind, lapply(sort(unique(labelled_cols$col_type)), function(t) {
         rows <- labelled_cols[labelled_cols$col_type == t, ]
         n    <- nrow(rows)
-        nlbl <- sum(rows$label_status == "labelled", na.rm = TRUE)
+        nlbl <- sum(rows$label_status %in% c("labelled", "llm"), na.rm = TRUE)
         data.frame(
           col_type     = t,
           `N cols`     = n,
@@ -452,7 +466,7 @@ generate_report <- function() {
 
   # label_method breakdown per paper
   if (!is.null(col_all) && "label_method" %in% names(col_all)) {
-    lm_rows <- col_all[!is.na(col_all$label_status) & col_all$label_status == "labelled" &
+    lm_rows <- col_all[!is.na(col_all$label_status) & col_all$label_status %in% c("labelled", "llm") &
                          !is.na(col_all$label_method), ]
     if (nrow(lm_rows) > 0) {
       L("### Label Method per Paper")
@@ -484,7 +498,7 @@ generate_report <- function() {
 
   # Unlabelled columns per paper
   if (!is.null(col_all) && "label_status" %in% names(col_all)) {
-    unlbl <- col_all[!is.na(col_all$label_status) & col_all$label_status != "labelled", ]
+    unlbl <- col_all[!is.na(col_all$label_status) & !col_all$label_status %in% c("labelled", "llm"), ]
     if (nrow(unlbl) > 0) {
       L("### Unlabelled Columns")
       BR()

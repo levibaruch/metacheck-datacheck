@@ -115,3 +115,30 @@ write_gt <- function(paper_id, gt_df) {
   write.csv(gt_df[GT_COLS], path, row.names = FALSE)
   invisible(path)
 }
+
+# ── Paper completion helpers ──────────────────────────────────────────────────
+
+# Returns a named logical vector (paper_id → complete?).
+# A paper is complete if its GT file has at least as many rows as its structure.
+paper_is_complete <- function(papers) {
+  outputs_dir <- get_outputs_dir()
+  gt_dir      <- get_gt_dir()
+  result <- vapply(papers, function(pid) {
+    struct_path <- file.path(outputs_dir, pid, "structure.csv")
+    gt_path     <- file.path(gt_dir, paste0(pid, ".csv"))
+    if (!file.exists(struct_path) || !file.exists(gt_path)) return(FALSE)
+    tryCatch({
+      n_struct <- nrow(read.csv(struct_path, stringsAsFactors = FALSE))
+      n_gt     <- nrow(read.csv(gt_path, stringsAsFactors = FALSE))
+      n_struct > 0L && n_gt >= n_struct
+    }, error = function(e) FALSE)
+  }, logical(1L))
+  result
+}
+
+# Returns a named character vector suitable for selectInput choices.
+# Complete papers are prefixed with a checkmark in their display label.
+make_paper_choices <- function(papers, completion) {
+  labels <- ifelse(completion[papers], paste0("\u2713 ", papers), papers)
+  setNames(papers, labels)
+}
