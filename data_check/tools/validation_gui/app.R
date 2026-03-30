@@ -10,11 +10,13 @@ library(bslib)
 # ── Locate data_check root ────────────────────────────────────────────────────
 
 local({
-  root <- normalizePath(file.path(getwd(), "../.."))
-  if (!dir.exists(file.path(root, "outputs"))) {
-    stop("Cannot locate outputs/ directory. Expected at: ", file.path(root, "outputs"))
+  if (is.null(getOption("dc_root"))) {
+    root <- normalizePath(file.path(getwd(), "../.."))
+    if (!dir.exists(file.path(root, "outputs"))) {
+      stop("Cannot locate outputs/ directory. Expected at: ", file.path(root, "outputs"))
+    }
+    options(dc_root = root)
   }
-  options(dc_root = root)
 })
 
 source(file.path(getOption("dc_root"), "tools", "validation_gui", "gt_store.R"))
@@ -24,13 +26,13 @@ source(file.path(getOption("dc_root"), "tools", "validation_gui", "preview.R"))
 
 TYPE_MAP <- c(
   "1" = "data", "2" = "code", "3" = "codebook", "4" = "supplemental",
-  "5" = "readme", "6" = "asset", "7" = "other"
+  "5" = "readme", "6" = "asset", "7" = "output", "8" = "other"
 )
 VALID_TYPES <- unname(TYPE_MAP)
 
 TYPE_ABBREV <- c(
   data = "dat", code = "cod", codebook = "cbk", supplemental = "sup",
-  readme = "rdm", asset = "ast", other = "oth"
+  readme = "rdm", asset = "ast", other = "oth", output = "out"
 )
 
 # ── JavaScript ────────────────────────────────────────────────────────────────
@@ -154,13 +156,12 @@ document.addEventListener("DOMContentLoaded", function() {
     _observer.observe(document.body, { childList: true, subtree: true });
   })();
 
-  // Custom message: enable/disable the data_granularity selector
+  // Custom message: enable/disable the data_granularity buttons
   Shiny.addCustomMessageHandler("set_data_granularity_disabled", function(msg) {
-    var el = document.getElementById("data_granularity_val");
-    if (!el) return;
-    el.disabled = msg.disabled;
-    var wrap = el.closest(".form-group") || el.parentElement;
-    if (wrap) wrap.style.opacity = msg.disabled ? "0.35" : "1";
+    var wrap = document.getElementById("data_granularity_ui");
+    if (!wrap) return;
+    wrap.querySelectorAll("button").forEach(function(btn) { btn.disabled = msg.disabled; });
+    wrap.style.opacity = msg.disabled ? "0.35" : "1";
   });
 
   document.addEventListener("focusin", function(e) {
@@ -201,7 +202,7 @@ document.addEventListener("DOMContentLoaded", function() {
       return;
     }
     var k = e.key.toLowerCase();
-    if (["1","2","3","4","5","6","7","8","r","g"].indexOf(k) !== -1) {
+    if (["1","2","3","4","5","6","7","8","i","c","g"].indexOf(k) !== -1) {
       e.preventDefault();
       Shiny.setInputValue("key_press", {key: k, ts: Date.now()}, {priority: "event"});
     }
@@ -293,6 +294,7 @@ details > summary { font-size:0.75em; font-weight:700; letter-spacing:0.05em;
 .tbadge-readme       { background:#e0f2f1; color:#00695c; }
 .tbadge-asset        { background:#fce4ec; color:#880e4f; }
 .tbadge-other        { background:#eceff1; color:#455a64; }
+.tbadge-output       { background:#e0f7fa; color:#006064; }
 
 /* Type buttons — light */
 .tbtn { border:1.5px solid rgba(0,0,0,0.13) !important; background:rgba(0,0,0,0.02) !important; color:rgba(0,0,0,0.45) !important; }
@@ -305,6 +307,7 @@ details > summary { font-size:0.75em; font-weight:700; letter-spacing:0.05em;
 .tbtn-readme.tbtn-active       { border-color:#00695c !important; background:rgba(0,105,92,0.1) !important;    color:#004d40 !important; box-shadow:0 0 8px rgba(0,105,92,0.2) !important; }
 .tbtn-asset.tbtn-active        { border-color:#880e4f !important; background:rgba(136,14,79,0.1) !important;   color:#560027 !important; box-shadow:0 0 8px rgba(136,14,79,0.2) !important; }
 .tbtn-other.tbtn-active        { border-color:#455a64 !important; background:rgba(69,90,100,0.1) !important;   color:#263238 !important; box-shadow:0 0 8px rgba(69,90,100,0.2) !important; }
+.tbtn-output.tbtn-active       { border-color:#006064 !important; background:rgba(0,96,100,0.1) !important;    color:#004d40 !important; box-shadow:0 0 8px rgba(0,96,100,0.2) !important; }
 
 /* File header — light */
 .file-hdr         { padding:11px 16px 10px; border-bottom:1px solid #dee2e6; background:#f8f9fa; margin-bottom:10px; }
@@ -393,6 +396,7 @@ hr { border-color:#dee2e6 !important; margin:8px 0 !important; }
 [data-theme='dark'] .tbadge-readme       { background:rgba(77,208,225,0.22);  color:#80deea; }
 [data-theme='dark'] .tbadge-asset        { background:rgba(244,143,177,0.22); color:#fce4ec; }
 [data-theme='dark'] .tbadge-other        { background:rgba(144,164,174,0.22); color:#b0bec5; }
+[data-theme='dark'] .tbadge-output       { background:rgba(0,188,212,0.22);   color:#80deea; }
 
 /* Type buttons — dark */
 [data-theme='dark'] .tbtn { border-color:rgba(255,255,255,0.13) !important; background:rgba(255,255,255,0.04) !important; color:rgba(255,255,255,0.45) !important; }
@@ -405,6 +409,17 @@ hr { border-color:#dee2e6 !important; margin:8px 0 !important; }
 [data-theme='dark'] .tbtn-readme.tbtn-active       { border-color:#4dd0e1 !important; background:rgba(77,208,225,0.22) !important;  color:#80deea !important; box-shadow:0 0 10px rgba(77,208,225,0.25) !important; }
 [data-theme='dark'] .tbtn-asset.tbtn-active        { border-color:#f48fb1 !important; background:rgba(244,143,177,0.22) !important; color:#fce4ec !important; box-shadow:0 0 10px rgba(244,143,177,0.25) !important; }
 [data-theme='dark'] .tbtn-other.tbtn-active        { border-color:#90a4ae !important; background:rgba(144,164,174,0.22) !important; color:#b0bec5 !important; box-shadow:0 0 10px rgba(144,164,174,0.25) !important; }
+[data-theme='dark'] .tbtn-output.tbtn-active       { border-color:#00bcd4 !important; background:rgba(0,188,212,0.22) !important;  color:#80deea !important; box-shadow:0 0 10px rgba(0,188,212,0.25) !important; }
+
+/* Granularity buttons — light */
+.dg-btn { border:1.5px solid rgba(0,0,0,0.13) !important; background:rgba(0,0,0,0.02) !important; color:rgba(0,0,0,0.45) !important; font-size:0.8em !important; padding:3px 10px !important; }
+.dg-btn:hover { background:rgba(0,0,0,0.06) !important; color:rgba(0,0,0,0.75) !important; border-color:rgba(0,0,0,0.25) !important; }
+.dg-btn.dg-active { border-color:#2e7d32 !important; background:rgba(46,125,50,0.1) !important; color:#1b5e20 !important; font-weight:700; box-shadow:0 0 8px rgba(46,125,50,0.2) !important; }
+
+/* Granularity buttons — dark */
+[data-theme='dark'] .dg-btn { border-color:rgba(255,255,255,0.13) !important; background:rgba(255,255,255,0.04) !important; color:rgba(255,255,255,0.45) !important; }
+[data-theme='dark'] .dg-btn:hover { background:rgba(255,255,255,0.1) !important; color:rgba(255,255,255,0.85) !important; border-color:rgba(255,255,255,0.28) !important; }
+[data-theme='dark'] .dg-btn.dg-active { border-color:#4caf50 !important; background:rgba(76,175,80,0.22) !important; color:#a5d6a7 !important; box-shadow:0 0 10px rgba(76,175,80,0.25) !important; }
 
 /* File header — dark */
 [data-theme='dark'] .file-hdr         { background:rgba(255,255,255,0.025); border-bottom-color:rgba(255,255,255,0.09); }
@@ -509,10 +524,7 @@ ui <- page_sidebar(
         div(style = "flex:1; min-width:120px; max-width:220px;",
             textInput("group_val", tags$small("Group"), value = "",
                       placeholder = "ex1, shared, na …")),
-        div(style = "min-width:110px;",
-            selectInput("data_granularity_val", tags$small("data_granularity"),
-                        choices = c("(unset)" = "", "individual", "combined"),
-                        selected = "", width = "100%")),
+        uiOutput("data_granularity_ui"),
         div(
           style = "margin-left:auto; display:flex; gap:6px; padding-bottom:4px;",
           actionButton("btn_back", "\u2190 Prev",      class = "btn-sm btn-outline-secondary"),
@@ -583,7 +595,7 @@ server <- function(input, output, session) {
     rv$structure <- struct
     rv$xml       <- load_paper_xml(pid)
 
-    col_path  <- file.path(getOption("dc_root", "."), "outputs", pid, "columns.csv")
+    col_path  <- file.path(get_outputs_dir(), pid, "columns.csv")
     col_names <- character(0)
     if (file.exists(col_path)) {
       tryCatch({
@@ -623,31 +635,23 @@ server <- function(input, output, session) {
       rv$selected_type        <- gt_row$type_gt[1]
       rv$data_granularity_val <- if (!is.na(gt_row$data_granularity_gt[1]))
                                    gt_row$data_granularity_gt[1] else ""
-      updateTextInput(session,  "group_val",            value = gt_row$group_gt[1])
-      updateSelectInput(session, "data_granularity_val", selected = rv$data_granularity_val)
+      updateTextInput(session, "group_val", value = gt_row$group_gt[1])
     } else {
       rv$selected_type        <- if (!is.na(row$type)) row$type else "other"
       rv$data_granularity_val <- if ("data_granularity" %in% names(row) &&
                                       !is.na(row$data_granularity))
                                    row$data_granularity else ""
-      updateTextInput(session,  "group_val",            value = row$group)
-      updateSelectInput(session, "data_granularity_val", selected = rv$data_granularity_val)
+      updateTextInput(session, "group_val", value = row$group)
     }
   }
 
-  # ── T012: data_granularity sync + disable for non-data types ────────────────
-
-  observeEvent(input$data_granularity_val, {
-    rv$data_granularity_val <- input$data_granularity_val
-  })
+  # ── T012: data_granularity disable for non-data types ───────────────────────
 
   observe({
     sel     <- isolate(rv$selected_type)
     is_data <- !is.na(sel) && sel == "data"
-    if (!is_data && nzchar(isolate(rv$data_granularity_val))) {
+    if (!is_data && nzchar(isolate(rv$data_granularity_val)))
       rv$data_granularity_val <- ""
-      updateSelectInput(session, "data_granularity_val", selected = "")
-    }
     session$sendCustomMessage("set_data_granularity_disabled", list(disabled = !is_data))
   }) |> bindEvent(rv$selected_type, ignoreInit = FALSE)
 
@@ -683,14 +687,15 @@ server <- function(input, output, session) {
       "4" = { rv$selected_type <- "supplemental" },
       "5" = { rv$selected_type <- "readme" },
       "6" = { rv$selected_type <- "asset" },
-      "7" = { rv$selected_type <- "other" },
-      "r" = {
-        if (!is.na(rv$selected_type) && rv$selected_type == "data") {
-          new_val <- if (rv$data_granularity_val == "") "individual" else
-                     if (rv$data_granularity_val == "individual") "combined" else ""
-          rv$data_granularity_val <- new_val
-          updateSelectInput(session, "data_granularity_val", selected = new_val)
-        }
+      "7" = { rv$selected_type <- "output" },
+      "8" = { rv$selected_type <- "other" },
+      "i" = {
+        if (!is.na(rv$selected_type) && rv$selected_type == "data")
+          rv$data_granularity_val <- if (rv$data_granularity_val == "individual") "" else "individual"
+      },
+      "c" = {
+        if (!is.na(rv$selected_type) && rv$selected_type == "data")
+          rv$data_granularity_val <- if (rv$data_granularity_val == "combined") "" else "combined"
       },
       "g"           = { session$sendCustomMessage("focus_group", list()) },
       "tab"         = { do_skip() },
@@ -802,9 +807,11 @@ server <- function(input, output, session) {
         tags$thead(tags$tr(tags$th("Key"), tags$th("Action"))),
         tags$tbody(
           tags$tr(tags$td(HTML("<kbd>1</kbd>\u2013<kbd>8</kbd>")),
-                  tags$td("Select type: data / code / codebook / supplemental / readme / asset / other")),
-          tags$tr(tags$td(HTML("<kbd>R</kbd>")),
-                  tags$td("Cycle data_granularity: (unset) \u2192 individual \u2192 combined (active only when type = data)")),
+                  tags$td("Select type: data / code / codebook / supplemental / readme / asset / other / output")),
+          tags$tr(tags$td(HTML("<kbd>I</kbd>")),
+                  tags$td("Toggle individual (active only when type = data)")),
+          tags$tr(tags$td(HTML("<kbd>C</kbd>")),
+                  tags$td("Toggle combined (active only when type = data)")),
           tags$tr(tags$td(HTML("<kbd>G</kbd>")),
                   tags$td("Move focus to the group text input")),
           tags$tr(tags$td(HTML("<kbd>\u2318\u23ce</kbd>")),
@@ -911,6 +918,34 @@ server <- function(input, output, session) {
     })
     div(class = "type-btn-row", do.call(tagList, btns))
   })
+
+  # T011: Granularity buttons
+  output$data_granularity_ui <- renderUI({
+    val <- rv$data_granularity_val
+    mk_btn <- function(id, label, key, v) {
+      is_active <- !is.na(val) && val == v
+      actionButton(id,
+        HTML(sprintf('<span class="tbtn__key">%s</span><span class="tbtn__label">%s</span>',
+                     key, label)),
+        class = paste0("btn dg-btn", if (is_active) " dg-active" else "")
+      )
+    }
+    div(style = "display:flex; flex-direction:column; gap:3px;",
+      tags$small("data_granularity"),
+      div(style = "display:flex; gap:6px;",
+        mk_btn("btn_dg_individual", "individual", "I", "individual"),
+        mk_btn("btn_dg_combined",   "combined",   "C", "combined")
+      )
+    )
+  })
+
+  observeEvent(input$btn_dg_individual, {
+    rv$data_granularity_val <- if (rv$data_granularity_val == "individual") "" else "individual"
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$btn_dg_combined, {
+    rv$data_granularity_val <- if (rv$data_granularity_val == "combined") "" else "combined"
+  }, ignoreInit = TRUE)
 
   # T034: Prediction mismatch note
   output$prediction_note_ui <- renderUI({
@@ -1126,8 +1161,7 @@ server <- function(input, output, session) {
       corr <- sum(!is.na(m$type_gt) & !is.na(m$type) & m$type_gt != m$type,
                   na.rm = TRUE)
     }
-    gt_path <- file.path(getOption("dc_root", "."), "ground_truth",
-                         paste0(pid, ".csv"))
+    gt_path <- file.path(get_gt_dir(), paste0(pid, ".csv"))
     cat("\n=== Validation session complete ===\n")
     cat(sprintf("  Annotator:   %s\n",  annotator))
     cat(sprintf("  Paper:       %s\n",  pid))
