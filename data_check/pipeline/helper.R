@@ -323,10 +323,11 @@ llm_batch <- function(paths, system_prompt, user_prefix, key_col, extra_cols,
     )
     names(chunk_fallback)[1] <- key_col
 
-    attempt  <- 1L
-    last_raw <- NULL
-    last_err <- NULL
-    success  <- FALSE
+    attempt       <- 1L
+    last_raw      <- NULL
+    last_err      <- NULL
+    last_fail_raw <- NULL
+    success       <- FALSE
 
     while (TRUE) {
       llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()
@@ -357,7 +358,8 @@ llm_batch <- function(paths, system_prompt, user_prefix, key_col, extra_cols,
         break
       }
 
-      last_err <- parsed
+      last_err      <- parsed
+      last_fail_raw <- raw
       if (attempt <= LLM_RETRY_LIMIT) {
         message(sprintf("\u2500\u2500 LLM chunk %d retry %d/%d \u2500\u2500", i, attempt, LLM_RETRY_LIMIT))
         attempt <- attempt + 1L
@@ -367,6 +369,18 @@ llm_batch <- function(paths, system_prompt, user_prefix, key_col, extra_cols,
     }
 
     if (success) {
+      if (attempt > 1L) {
+        pid   <- if (!is.null(paper_id))   paper_id   else "<unknown>"
+        stage <- if (!is.null(stage_name)) stage_name else "<unknown>"
+        dir.create(dirname(LLM_ERROR_LOG), recursive = TRUE, showWarnings = FALSE)
+        cat(sprintf("[%s] paper_id=%s stage=%s chunk=%d n_items=%d retries=%d SUCCEEDED\n--- system prompt ---\n%s\n--- user prompt ---\n%s\n--- last failed response ---\n%s\n---\n\n",
+                    format(Sys.time(), "%Y-%m-%dT%H:%M:%S"),
+                    pid, stage, i, length(chunk_paths), attempt - 1L,
+                    system_prompt,
+                    chunk_input,
+                    last_fail_raw$answer),
+            file = LLM_ERROR_LOG, append = TRUE)
+      }
       all_parsed[[i]] <- parsed
     } else {
       # All retries exhausted — log the failure

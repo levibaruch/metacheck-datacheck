@@ -41,7 +41,7 @@ AGGREGATE_EXT_OVERRIDE <- c(
 )
 if (!exists("LLM_BATCH_SIZE"))  LLM_BATCH_SIZE  <- 30
 if (!exists("LLM_RETRY_LIMIT")) LLM_RETRY_LIMIT <- 3L
-if (!exists("LLM_ERROR_LOG"))   LLM_ERROR_LOG   <- "logs/llm_batch_errors.log"
+if (!exists("LLM_ERROR_LOG"))   LLM_ERROR_LOG   <- "./data_check/logs/llm_batch_errors.log"
 if (!exists("LLM_SENTINEL_VAL")) LLM_SENTINEL_VAL <- "llm_error"
 N_DATA_READ     <- 5
 MAX_TOTAL_DATA_MB <- 10 * 1024  # 10 GB total data read cap per paper across all data files
