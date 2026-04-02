@@ -1,0 +1,1088 @@
+# report_normal.R
+# ─────────────────────────────────────────────────────────────────────────────
+# Generates a classification evaluation report for all "normal" (non-test)
+# papers in outputs/ that have BOTH:
+#   - outputs/<paper_id>/structure.csv  (stage 0 / indexing done)
+#   - ground_truth/<paper_id>.csv       (manual annotations)
+#
+# Outputs:
+#   results/normal_report_<date>.md
+#   results/normal_report_<date>_metrics.png          file-pooled per-class P/R/F1
+#   results/normal_report_<date>_metrics_pa.png       paper-averaged per-class F1 (box)
+#   results/normal_report_<date>_confusion.png        file-pooled type confusion matrix
+#   results/normal_report_<date>_confusion_pa.png     paper-averaged type confusion matrix
+#   results/normal_report_<date>_paper_dist.png       per-paper accuracy distribution
+#   results/normal_report_<date>_paper_scatter.png    paper size vs accuracy scatter
+#   results/normal_report_<date>_kappa_dist.png       per-paper kappa distribution
+#   results/normal_report_<date>_summary_compare.png  paper-avg vs file-pooled comparison
+#   results/normal_report_<date>_fp_fn.png            top FP/FN confusion pairs
+#   results/normal_report_<date>_ext_errors.png       error rate by file extension
+#   results/normal_report_<date>_group_conf.png       group confusion matrix heatmap
+#   results/normal_report_<date>_dg_conf.png          data_granularity confusion heatmap
+#   results/normal_report_<date>_df_conf.png           data_format confusion heatmap
+#
+# Usage (interactive):  source("data_check/runners/report_normal.R")
+# Usage (CLI):          Rscript data_check/runners/report_normal.R
+# ─────────────────────────────────────────────────────────────────────────────
+
+OUTPUTS_DIR  <- "./data_check/outputs"
+GT_DIR       <- "./data_check/ground_truth"
+REPORT_DIR   <- "./data_check/results"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+`%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
+
+pct     <- function(n, d) if (d == 0L) "n/a" else sprintf("%.1f%%", 100 * n / d)
+pct_num <- function(n, d) if (d == 0L) NA_real_ else 100 * n / d
+fmt1    <- function(x) if (is.na(x)) "n/a" else sprintf("%.1f%%", x)
+fmt3    <- function(x) if (is.na(x)) "n/a" else sprintf("%.3f", x)
+
+na_dash <- function(x) ifelse(is.na(x) | x == "NA", "—", as.character(x))
+
+md_table <- function(df) {
+  df[] <- lapply(df, na_dash)
+  hdr  <- paste0("| ", paste(names(df), collapse = " | "), " |")
+  sep  <- paste0("| ", paste(rep("---", ncol(df)), collapse = " | "), " |")
+  rows <- apply(df, 1, function(r) paste0("| ", paste(r, collapse = " | "), " |"))
+  paste(c(hdr, sep, rows), collapse = "\n")
+}
+
+most_common <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA_character_)
+  names(sort(table(x), decreasing = TRUE))[1]
+}
+
+get_ext <- function(path) {
+  base    <- basename(path)
+  has_dot <- grepl("\\.", base)
+  tolower(ifelse(has_dot, sub(".*\\.", "", base), "(none)"))
+}
+
+# compute kappa, macro-F1, MCC from a confusion matrix
+cm_stats <- function(cm_m) {
+  N <- sum(cm_m)
+  if (N == 0) return(list(kappa = NA_real_, macro_f1 = NA_real_, mcc = NA_real_, accuracy = NA_real_))
+  rs  <- rowSums(cm_m)
+  cs  <- colSums(cm_m)
+  p_o <- sum(diag(cm_m)) / N
+  p_e <- sum(rs * cs) / N^2
+  kap <- if (p_e < 1) (p_o - p_e) / (1 - p_e) else NA_real_
+
+  all_t  <- rownames(cm_m)
+  f1s <- sapply(all_t, function(cls) {
+    tp <- cm_m[cls, cls]
+    fp <- sum(cm_m[, cls]) - tp
+    fn <- sum(cm_m[cls, ]) - tp
+    p  <- if ((tp + fp) > 0) tp / (tp + fp) else NA_real_
+    r  <- if ((tp + fn) > 0) tp / (tp + fn) else NA_real_
+    if (!is.na(p) && !is.na(r) && (p + r) > 0) 2*p*r/(p+r) else NA_real_
+  })
+  mf1 <- mean(f1s, na.rm = TRUE) * 100
+
+  mcc_n <- N * sum(diag(cm_m)) - sum(rs * cs)
+  mcc_d <- sqrt((N^2 - sum(cs^2)) * (N^2 - sum(rs^2)))
+  mcc   <- if (mcc_d > 0) mcc_n / mcc_d else NA_real_
+
+  list(kappa = kap, macro_f1 = mf1, mcc = mcc, accuracy = p_o * 100,
+       f1s = f1s * 100)
+}
+
+heatmap_plot <- function(mat, title, xlab = "Predicted", ylab = "Ground truth",
+                         subtitle = NULL) {
+  n        <- nrow(mat)
+  row_sums <- rowSums(mat)
+  norm     <- mat / ifelse(row_sums == 0, 1, row_sums)
+  col_ramp <- colorRampPalette(c("white", "#2171b5"))(100)
+  lbls     <- rownames(mat)
+  top_mar  <- if (!is.null(subtitle)) 4 else 3
+  old_par  <- par(mar = c(7, 7, top_mar, 2))
+  image(seq_len(n), seq_len(n), t(norm)[, n:1],
+        col = col_ramp, axes = FALSE, xlab = "", ylab = "", main = title)
+  if (!is.null(subtitle))
+    mtext(subtitle, side = 3, line = 0.2, cex = 0.8, col = "grey40")
+  axis(1, at = seq_len(n), labels = lbls,      las = 2, cex.axis = 0.85)
+  axis(2, at = seq_len(n), labels = rev(lbls), las = 1, cex.axis = 0.85)
+  mtext(xlab, side = 1, line = 5.5, cex = 0.9)
+  mtext(ylab, side = 2, line = 5.5, cex = 0.9)
+  for (i in seq_len(n))
+    for (j in seq_len(n)) {
+      v <- mat[n + 1 - j, i]
+      if (v > 0) text(i, j, if (v < 1) sprintf("%.2f", v) else as.character(round(v)),
+                      col = if (norm[n + 1 - j, i] > 0.6) "white" else "black",
+                      cex = 0.75)
+    }
+  par(old_par)
+}
+
+# ── Discover eligible papers ──────────────────────────────────────────────────
+
+gt_ids <- sub("\\.csv$", "", list.files(GT_DIR, pattern = "\\.csv$"))
+
+eligible <- Filter(function(pid) {
+  file.exists(file.path(OUTPUTS_DIR, pid, "structure.csv"))
+}, gt_ids)
+
+if (length(eligible) == 0) {
+  cat("No papers found with both structure.csv and a ground-truth file.\n")
+  quit(status = 0)
+}
+
+cat(sprintf("Found %d eligible papers.\n", length(eligible)))
+
+# ── Load and merge GT + structure ─────────────────────────────────────────────
+
+acc_list <- list()
+for (pid in eligible) {
+  gt_path  <- file.path(GT_DIR,      paste0(pid, ".csv"))
+  str_path <- file.path(OUTPUTS_DIR, pid, "structure.csv")
+
+  gt  <- tryCatch(
+    read.csv(gt_path,  colClasses = c(paper_id = "character"), stringsAsFactors = FALSE),
+    error = function(e) { message("[WARN] could not read ", gt_path); NULL }
+  )
+  str <- tryCatch(
+    read.csv(str_path, colClasses = c(paper_id = "character"), stringsAsFactors = FALSE),
+    error = function(e) { message("[WARN] could not read ", str_path); NULL }
+  )
+
+  if (is.null(gt) || is.null(str) || nrow(gt) == 0) next
+
+  keep_str <- intersect(
+    c("rel_path", "type", "group", "data_granularity", "data_format", "type_source"),
+    names(str)
+  )
+  m <- merge(
+    gt[, intersect(c("rel_path", "type_gt", "group_gt", "data_granularity_gt", "data_format_gt"), names(gt))],
+    str[, keep_str],
+    by = "rel_path", all.x = TRUE
+  )
+  m$paper_id <- pid
+  acc_list[[pid]] <- m
+}
+
+acc     <- if (length(acc_list) > 0) do.call(rbind, acc_list) else NULL
+has_acc <- !is.null(acc) && nrow(acc) > 0
+
+if (!has_acc) {
+  cat("No accuracy data could be built — check GT and structure files.\n")
+  quit(status = 0)
+}
+
+# ── File-pooled metrics ───────────────────────────────────────────────────────
+
+valid     <- acc[!is.na(acc$type_gt) & !is.na(acc$type), ]
+all_types <- sort(unique(c(valid$type_gt, valid$type)))
+
+class_metrics <- do.call(rbind, lapply(all_types, function(cls) {
+  tp <- sum(valid$type_gt == cls & valid$type == cls)
+  fp <- sum(valid$type_gt != cls & valid$type == cls)
+  fn <- sum(valid$type_gt == cls & valid$type != cls)
+  tn <- sum(valid$type_gt != cls & valid$type != cls)
+
+  prec <- pct_num(tp, tp + fp)
+  rec  <- pct_num(tp, tp + fn)
+  f1   <- if (!is.na(prec) && !is.na(rec) && (prec + rec) > 0)
+             2 * prec * rec / (prec + rec) else NA_real_
+  fpr  <- pct_num(fp, fp + tn)
+  fnr  <- pct_num(fn, tp + fn)
+
+  fp_rows <- valid[valid$type_gt != cls & valid$type == cls, ]
+  fn_rows <- valid[valid$type_gt == cls & valid$type != cls, ]
+
+  data.frame(
+    class         = cls, tp = tp, fp = fp, fn = fn, tn = tn,
+    precision     = prec, recall = rec, f1 = f1, fpr = fpr, fnr = fnr,
+    top_fp_source = (if (nrow(fp_rows) > 0) names(sort(table(fp_rows$type_gt), decreasing=TRUE))[1] else NA_character_) %||% NA_character_,
+    top_fn_dest   = (if (nrow(fn_rows) > 0) names(sort(table(fn_rows$type),    decreasing=TRUE))[1] else NA_character_) %||% NA_character_,
+    stringsAsFactors = FALSE
+  )
+}))
+
+# File-pooled confusion matrix + global stats
+ctypes <- sort(unique(c(valid$type_gt, valid$type)))
+cm     <- as.data.frame.matrix(
+  table(gt   = factor(valid$type_gt, levels = ctypes),
+        pred = factor(valid$type,    levels = ctypes))
+)
+fp_stats   <- cm_stats(as.matrix(cm))
+macro_f1   <- fp_stats$macro_f1
+kappa      <- fp_stats$kappa
+mcc        <- fp_stats$mcc
+
+micro_tp <- sum(class_metrics$tp)
+micro_fp <- sum(class_metrics$fp)
+micro_fn <- sum(class_metrics$fn)
+micro_p  <- micro_tp / (micro_tp + micro_fp)
+micro_r  <- micro_tp / (micro_tp + micro_fn)
+micro_f1 <- if ((micro_p + micro_r) > 0) 2 * micro_p * micro_r / (micro_p + micro_r) * 100 else NA_real_
+
+# ── Per-paper metrics (κ, macro F1, MCC, accuracy, per-class F1) ─────────────
+
+per_paper_full <- do.call(rbind, Filter(Negate(is.null), lapply(sort(unique(acc$paper_id)), function(pid) {
+  v <- valid[valid$paper_id == pid, ]
+  if (nrow(v) < 2) return(NULL)
+
+  all_t <- sort(unique(c(v$type_gt, v$type)))
+  cm_p  <- as.matrix(table(
+    gt   = factor(v$type_gt, levels = all_t),
+    pred = factor(v$type,    levels = all_t)
+  ))
+  s <- cm_stats(cm_p)
+
+  a  <- acc[acc$paper_id == pid, ]
+  da <- a[!is.na(a$type_gt) & a$type_gt == "data", ]
+  dg <- da[!is.na(da$data_granularity_gt), ]
+  df <- da[!is.na(da$data_format_gt), ]
+  n_group <- sum(!is.na(da$group_gt))
+  n_dg    <- nrow(dg)
+  n_df    <- nrow(df)
+
+  w <- v[v$type_gt != v$type, ]
+  top_err <- if (nrow(w) > 0) {
+    pk  <- paste0(w$type_gt, "→", w$type)
+    tbl <- sort(table(pk), decreasing = TRUE)
+    sprintf("%s (%d)", names(tbl)[1], tbl[[1]])
+  } else "—"
+  top_ext <- if (nrow(w) > 0) {
+    names(sort(table(get_ext(w$rel_path)), decreasing = TRUE))[1]
+  } else "—"
+
+  data.frame(
+    paper_id  = pid,
+    n_files   = nrow(v),
+    kappa     = s$kappa,
+    macro_f1  = s$macro_f1,
+    mcc       = s$mcc,
+    type_acc  = s$accuracy,
+    group_acc = pct_num(sum(!is.na(da$group_gt) & !is.na(da$group) & da$group_gt == da$group), n_group),
+    dg_acc    = pct_num(sum(!is.na(dg$data_granularity) & dg$data_granularity_gt == dg$data_granularity), n_dg),
+    df_acc    = pct_num(sum(!is.na(df$data_format) & df$data_format_gt == df$data_format), n_df),
+    top_err   = top_err,
+    top_ext   = top_ext,
+    stringsAsFactors = FALSE
+  )
+})))
+
+# Paper-averaged summary scalars
+pa_kappa    <- mean(per_paper_full$kappa,    na.rm = TRUE)
+pa_macro_f1 <- mean(per_paper_full$macro_f1, na.rm = TRUE)
+pa_mcc      <- mean(per_paper_full$mcc,      na.rm = TRUE)
+pa_accuracy <- mean(per_paper_full$type_acc, na.rm = TRUE)
+
+# Per-paper per-class F1 (for box plots and paper-averaged per-class table)
+per_paper_class_f1 <- do.call(rbind, Filter(Negate(is.null), lapply(sort(unique(acc$paper_id)), function(pid) {
+  v <- valid[valid$paper_id == pid, ]
+  if (nrow(v) < 2) return(NULL)
+  do.call(rbind, Filter(Negate(is.null), lapply(all_types, function(cls) {
+    n_gt <- sum(v$type_gt == cls)
+    if (n_gt == 0) return(NULL)
+    tp <- sum(v$type_gt == cls & v$type == cls)
+    fp <- sum(v$type_gt != cls & v$type == cls)
+    fn <- sum(v$type_gt == cls & v$type != cls)
+    p  <- if ((tp + fp) > 0) tp / (tp + fp) else NA_real_
+    r  <- if ((tp + fn) > 0) tp / (tp + fn) else NA_real_
+    f1 <- if (!is.na(p) && !is.na(r) && (p + r) > 0) 2*p*r/(p+r)*100 else NA_real_
+    data.frame(paper_id = pid, class = cls, f1 = f1, n_gt = n_gt,
+               stringsAsFactors = FALSE)
+  })))
+})))
+
+# Paper-averaged per-class F1
+pa_class_metrics <- do.call(rbind, lapply(all_types, function(cls) {
+  rows <- per_paper_class_f1[per_paper_class_f1$class == cls, ]
+  data.frame(
+    class    = cls,
+    pa_f1    = mean(rows$f1, na.rm = TRUE),
+    pa_f1_sd = sd(rows$f1,   na.rm = TRUE),
+    n_papers = sum(!is.na(rows$f1)),
+    fp_f1    = class_metrics$f1[class_metrics$class == cls],
+    stringsAsFactors = FALSE
+  )
+}))
+
+# Paper-averaged confusion matrix (average of per-paper row-normalised matrices)
+pa_cm_norm <- Reduce("+", Filter(Negate(is.null), lapply(sort(unique(acc$paper_id)), function(pid) {
+  v <- valid[valid$paper_id == pid, ]
+  if (nrow(v) < 2) return(NULL)
+  cm_p <- as.matrix(table(
+    gt   = factor(v$type_gt, levels = ctypes),
+    pred = factor(v$type,    levels = ctypes)
+  ))
+  rs <- rowSums(cm_p)
+  cm_p / ifelse(rs == 0, 1, rs)   # row-normalise
+}))) / length(unique(per_paper_full$paper_id))
+
+# ── Per-paper accuracy (legacy alias) ────────────────────────────────────────
+type_vals  <- per_paper_full$type_acc[!is.na(per_paper_full$type_acc)]
+group_vals <- per_paper_full$group_acc[!is.na(per_paper_full$group_acc)]
+dg_vals    <- per_paper_full$dg_acc[!is.na(per_paper_full$dg_acc)]
+
+# ── Top confusion pairs ───────────────────────────────────────────────────────
+
+wrong       <- valid[valid$type_gt != valid$type, ]
+pair_key    <- paste0(wrong$type_gt, " → ", wrong$type)
+pair_counts <- sort(table(pair_key), decreasing = TRUE)
+top_pairs   <- head(pair_counts, 20)
+
+# ── Extension-level error analysis ───────────────────────────────────────────
+
+acc$ext   <- get_ext(acc$rel_path)
+valid_ext <- acc[!is.na(acc$type_gt) & !is.na(acc$type), ]
+
+ext_stats <- do.call(rbind, Filter(Negate(is.null), lapply(sort(unique(valid_ext$ext)), function(e) {
+  rows  <- valid_ext[valid_ext$ext == e, ]
+  n     <- nrow(rows)
+  wrong_rows <- rows[rows$type_gt != rows$type, ]
+  n_wrong <- nrow(wrong_rows)
+  if (n < 5) return(NULL)
+  top_pair <- if (n_wrong > 0) {
+    pk  <- paste0(wrong_rows$type_gt, "→", wrong_rows$type)
+    tbl <- sort(table(pk), decreasing = TRUE)
+    sprintf("%s (%d)", names(tbl)[1], tbl[[1]])
+  } else "—"
+  data.frame(ext = e, n_files = n, n_errors = n_wrong,
+             error_rate = pct_num(n_wrong, n), top_pair = top_pair,
+             stringsAsFactors = FALSE)
+})))
+ext_stats <- ext_stats[order(-ext_stats$n_errors), ]
+
+# ── Group confusion matrix ────────────────────────────────────────────────────
+
+grp_valid <- acc[
+  !is.na(acc$type_gt) & acc$type_gt == "data" &
+  !is.na(acc$type)    & acc$type    == "data" &
+  !is.na(acc$group_gt) & !is.na(acc$group), ]
+
+if (nrow(grp_valid) > 0) {
+  grp_levels <- sort(unique(c(grp_valid$group_gt, grp_valid$group)))
+  cm_grp <- as.matrix(table(
+    gt   = factor(grp_valid$group_gt, levels = grp_levels),
+    pred = factor(grp_valid$group,    levels = grp_levels)
+  ))
+} else {
+  cm_grp <- NULL
+}
+
+# ── DG confusion matrix ───────────────────────────────────────────────────────
+
+dg_valid <- acc[
+  !is.na(acc$type_gt) & acc$type_gt == "data" &
+  !is.na(acc$type)    & acc$type    == "data" &
+  !is.na(acc$data_granularity_gt) & !is.na(acc$data_granularity), ]
+
+if (nrow(dg_valid) > 0) {
+  dg_levels <- sort(unique(c(dg_valid$data_granularity_gt, dg_valid$data_granularity)))
+  cm_dg <- as.matrix(table(
+    gt   = factor(dg_valid$data_granularity_gt, levels = dg_levels),
+    pred = factor(dg_valid$data_granularity,    levels = dg_levels)
+  ))
+} else {
+  cm_dg <- NULL
+}
+
+# ── data_format confusion matrix ─────────────────────────────────────────────
+
+df_valid <- acc[
+  !is.na(acc$type_gt) & acc$type_gt == "data" &
+  !is.na(acc$type)    & acc$type    == "data" &
+  !is.na(acc$data_format_gt) & !is.na(acc$data_format), ]
+
+if (nrow(df_valid) > 0) {
+  df_levels <- sort(unique(c(df_valid$data_format_gt, df_valid$data_format)))
+  cm_df <- as.matrix(table(
+    gt   = factor(df_valid$data_format_gt, levels = df_levels),
+    pred = factor(df_valid$data_format,    levels = df_levels)
+  ))
+} else {
+  cm_df <- NULL
+}
+
+# ── Downstream FP/FN impact on `data` ────────────────────────────────────────
+
+data_fp <- valid[valid$type_gt != "data" & valid$type == "data", ]
+data_fn <- valid[valid$type_gt == "data" & valid$type != "data", ]
+
+# ── Kappa interpretation ──────────────────────────────────────────────────────
+
+kappa_interp <- function(k) {
+  if (is.na(k))  return("n/a")
+  if (k < 0)     return("poor (< 0)")
+  if (k < 0.20)  return("slight (0.00–0.20)")
+  if (k < 0.40)  return("fair (0.20–0.40)")
+  if (k < 0.60)  return("moderate (0.40–0.60)")
+  if (k < 0.80)  return("substantial (0.60–0.80)")
+  return("almost perfect (0.80–1.00)")
+}
+
+# ── Build report ──────────────────────────────────────────────────────────────
+
+lines <- character(0)
+L  <- function(...) { lines <<- c(lines, paste0(...)) }
+BR <- function()    { lines <<- c(lines, "") }
+
+date_str <- format(Sys.Date(), "%Y-%m-%d")
+now_str  <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+n_papers <- length(unique(acc$paper_id))
+tn_total <- sum(!is.na(acc$type_gt))
+
+# ── Metric Glossary ───────────────────────────────────────────────────────────
+
+L("# LLM Classification Evaluation Report — ", date_str)
+BR()
+L("**Papers:** ", n_papers, "  |  **Annotated files:** ", tn_total, "  |  **Generated:** ", now_str)
+BR()
+L("_Compares LLM-predicted file classifications against human-annotated ground truth for all indexed papers with annotation files._")
+BR()
+
+L("---")
+BR()
+L("## Metric Glossary")
+BR()
+L("The following metrics are standard in both the AI classification literature and psychology inter-rater agreement research. All apply to the comparison between the LLM's output and a human-labelled ground truth.")
+BR()
+L("| Metric | What it measures | Range | Notes |")
+L("|---|---|---|---|")
+L("| **Accuracy** | Fraction of all files classified correctly | 0–100% | Simple but misleading when class sizes are unequal — a model that always guesses the most common class can score high |")
+L("| **Precision** | Of all files the model labelled as class X, how many truly are X | 0–100% | Low precision → many false alarms for that class |")
+L("| **Recall** | Of all files that truly are class X, how many did the model catch | 0–100% | Low recall → the model misses many real instances of that class |")
+L("| **F1** | Harmonic mean of Precision and Recall: `2·P·R / (P+R)` | 0–100% | Collapses to near zero if either P or R is poor; useful single-number summary per class |")
+L("| **Macro F1** | Unweighted average of per-class F1 scores | 0–100% | Treats every class equally regardless of how many files it has; penalises poor performance on rare classes |")
+L("| **Micro F1** | F1 computed from pooled TP/FP/FN across all classes | 0–100% | Weighted by class frequency; equals overall accuracy in multi-class settings. Compare to Macro F1: a large gap signals that rare classes drive errors |")
+L("| **Cohen's κ** | Agreement between LLM and human annotator beyond what chance alone would produce | −1 to 1 | The standard inter-rater reliability statistic in psychology. κ = 0 means agreement no better than random guessing; κ = 1 is perfect agreement. Landis & Koch (1977) benchmarks: < 0.20 slight, 0.20–0.40 fair, 0.40–0.60 moderate, 0.60–0.80 substantial, > 0.80 almost perfect |")
+L("| **MCC** | Matthews Correlation Coefficient — single scalar summarising the full confusion matrix | −1 to 1 | More robust than F1 or accuracy when classes are imbalanced. MCC = 1 is perfect, 0 is random, −1 is perfectly inverted. Recommended by Chicco & Jurman (2020) as the most informative single metric for classification |")
+L("| **FPR** | False positive rate: fraction of true-negative files incorrectly labelled as class X | 0–100% | Measures contamination — how often the model cries wolf |")
+L("| **FNR** | False negative rate: fraction of true class-X files the model missed (= 1 − Recall) | 0–100% | Measures miss rate |")
+BR()
+L("**File-pooled vs. paper-averaged:** all metrics appear in two forms throughout this report.")
+BR()
+L("- _File-pooled_: computed across all files at once. A paper with 2000 files contributes 2000 votes; a paper with 10 contributes 10. Reflects overall pipeline throughput.")
+L("- _Paper-averaged_: each metric is computed per paper, then averaged across papers. Every paper contributes equally regardless of size. This is the primary metric — it treats each study as one replication unit, consistent with how psychology research is aggregated.")
+BR()
+L("---")
+BR()
+
+# ── 1. Executive Summary ──────────────────────────────────────────────────────
+
+tc   <- sum(!is.na(acc$type_gt) & !is.na(acc$type) & acc$type_gt == acc$type)
+tn_n <- sum(!is.na(acc$type_gt))
+
+data_acc_rows <- acc[!is.na(acc$type_gt) & acc$type_gt == "data", ]
+dg_acc_rows   <- data_acc_rows[!is.na(data_acc_rows$data_granularity_gt), ]
+df_acc_rows   <- data_acc_rows[!is.na(data_acc_rows$data_format_gt), ]
+gc <- sum(!is.na(data_acc_rows$group_gt) & !is.na(data_acc_rows$group) & data_acc_rows$group_gt == data_acc_rows$group)
+gn <- sum(!is.na(data_acc_rows$group_gt))
+dc <- sum(!is.na(dg_acc_rows$data_granularity) & dg_acc_rows$data_granularity_gt == dg_acc_rows$data_granularity)
+dn <- nrow(dg_acc_rows)
+dfc <- sum(!is.na(df_acc_rows$data_format) & df_acc_rows$data_format_gt == df_acc_rows$data_format)
+dfn <- nrow(df_acc_rows)
+
+L("## 1. Executive Summary")
+BR()
+L("_Based on **", tn_n, " annotated files** across **", n_papers, " papers**._")
+BR()
+L("| Metric | **Paper-averaged** (primary) | File-pooled (secondary) |")
+L("|---|---|---|")
+L(sprintf("| **Cohen's κ** | **%s** (%s) | %s (%s) |",
+  fmt3(pa_kappa), kappa_interp(pa_kappa), fmt3(kappa), kappa_interp(kappa)))
+L(sprintf("| **Macro F1** | **%s** | %s |", fmt1(pa_macro_f1), fmt1(macro_f1)))
+L(sprintf("| **Micro F1** | — | %s |", fmt1(micro_f1)))
+L(sprintf("| **MCC** | **%s** | %s |", fmt3(pa_mcc), fmt3(mcc)))
+L(sprintf("| **Overall accuracy** | **%s** | %s (%d / %d files) |",
+  fmt1(pa_accuracy), pct(tc, tn_n), tc, tn_n))
+BR()
+L("_Paper-averaged and file-pooled metrics diverge when a small number of large repositories dominate the corpus. When they differ substantially, the paper-averaged figure is the more reliable estimate of generalised classification quality._")
+BR()
+L("![Paper-averaged vs file-pooled summary](summary_compare.png)")
+BR()
+L("**Subfield performance** (conditional on type = data, file-pooled):")
+BR()
+L("| Task | Accuracy | N |")
+L("|---|---|---|")
+L(sprintf("| Group classification | %s | %d files |", pct(gc, gn), gn))
+L(sprintf("| data_granularity classification | %s | %d files |", pct(dc, dn), dn))
+L(sprintf("| data_format (raw vs tabular) | %s | %d files |", pct(dfc, dfn), dfn))
+BR()
+L("---")
+BR()
+
+# ── 2. Type Confusion Matrices ────────────────────────────────────────────────
+
+L("## 2. Type Confusion Matrices")
+BR()
+L("_Rows = ground truth, columns = predicted. Diagonal = correct. Off-diagonal cells are errors: row tells you what the file was, column tells you what the LLM called it._")
+BR()
+
+L("### 2a. File-pooled (raw counts)")
+BR()
+L("_Each file contributes one count. Large repositories dominate._")
+BR()
+if (nrow(valid) > 0) {
+  L(md_table(cbind(data.frame(`type \\ pred` = rownames(cm), check.names = FALSE), cm)))
+} else {
+  L("_Insufficient data._")
+}
+BR()
+L("![File-pooled type confusion matrix](confusion.png)")
+BR()
+
+L("### 2b. Paper-averaged (mean row-normalised proportions)")
+BR()
+L("_Each paper's confusion matrix is row-normalised (rows sum to 1.0) then averaged across papers. Every paper contributes equally. Values are proportions, not counts._")
+BR()
+if (!is.null(pa_cm_norm) && nrow(pa_cm_norm) > 0) {
+  pa_cm_df <- as.data.frame(round(pa_cm_norm, 3))
+  L(md_table(cbind(data.frame(`type \\ pred` = rownames(pa_cm_df), check.names = FALSE), pa_cm_df)))
+} else {
+  L("_Insufficient data._")
+}
+BR()
+L("![Paper-averaged type confusion matrix](confusion_pa.png)")
+BR()
+L("---")
+BR()
+
+# ── 3. Per-Class Metrics ──────────────────────────────────────────────────────
+
+L("## 3. Per-Class Metrics")
+BR()
+L("_**Paper-avg F1** = mean F1 across papers that contain at least one file of that class (each paper weighted equally). **File-pooled F1** = F1 computed on the full pool. **SD** = standard deviation of paper-level F1 scores — high SD means performance varies considerably across papers. N papers = number of papers where this class appears._")
+BR()
+L("_TP/FP/FN are file-pooled counts. Precision/Recall/FPR/FNR are file-pooled._")
+BR()
+
+pa_metrics_tbl <- data.frame(
+  Class          = pa_class_metrics$class,
+  `Paper-avg F1` = sapply(pa_class_metrics$pa_f1, fmt1),
+  SD             = sapply(pa_class_metrics$pa_f1_sd, fmt1),
+  `N papers`     = pa_class_metrics$n_papers,
+  `File-pool F1` = sapply(pa_class_metrics$fp_f1, fmt1),
+  TP             = class_metrics$tp,
+  FP             = class_metrics$fp,
+  FN             = class_metrics$fn,
+  Precision      = sapply(class_metrics$precision, fmt1),
+  Recall         = sapply(class_metrics$recall,    fmt1),
+  FPR            = sapply(class_metrics$fpr,       fmt1),
+  FNR            = sapply(class_metrics$fnr,       fmt1),
+  `Top FP src`   = ifelse(is.na(class_metrics$top_fp_source), "—", class_metrics$top_fp_source),
+  `Top FN dest`  = ifelse(is.na(class_metrics$top_fn_dest),   "—", class_metrics$top_fn_dest),
+  check.names    = FALSE, stringsAsFactors = FALSE
+)
+L(md_table(pa_metrics_tbl))
+BR()
+L("![File-pooled per-class Precision / Recall / F1](metrics.png)")
+BR()
+L("![Paper-averaged per-class F1 with distribution](metrics_pa.png)")
+BR()
+L("---")
+BR()
+
+# ── 4. Subfield Breakdowns ────────────────────────────────────────────────────
+
+L("## 4. Subfield Classification (data files only)")
+BR()
+L("_Group and data_granularity tasks apply only to files the LLM correctly identified as type = data._")
+BR()
+
+L("### 4a. Group confusion matrix")
+BR()
+if (!is.null(cm_grp) && nrow(cm_grp) > 0) {
+  cm_grp_df <- as.data.frame.matrix(cm_grp)
+  L(md_table(cbind(data.frame(`group \\ pred` = rownames(cm_grp_df), check.names = FALSE), cm_grp_df)))
+  BR()
+  L("![Group confusion matrix](group_conf.png)")
+} else {
+  L("_Insufficient data._")
+}
+BR()
+
+L("### 4b. data_granularity confusion matrix")
+BR()
+if (!is.null(cm_dg) && nrow(cm_dg) > 0) {
+  cm_dg_df <- as.data.frame.matrix(cm_dg)
+  L(md_table(cbind(data.frame(`dg \\ pred` = rownames(cm_dg_df), check.names = FALSE), cm_dg_df)))
+  BR()
+  L("![DG confusion matrix](dg_conf.png)")
+} else {
+  L("_Insufficient data._")
+}
+BR()
+
+L("### 4c. data_format confusion matrix (raw vs tabular)")
+BR()
+if (!is.null(cm_df) && nrow(cm_df) > 0) {
+  cm_df_df <- as.data.frame.matrix(cm_df)
+  L(md_table(cbind(data.frame(`format \\ pred` = rownames(cm_df_df), check.names = FALSE), cm_df_df)))
+  BR()
+  L("![data_format confusion matrix](df_conf.png)")
+} else {
+  L("_Insufficient data._")
+}
+BR()
+L("---")
+BR()
+
+# ── 5. Error Analysis ─────────────────────────────────────────────────────────
+
+L("## 5. Error Analysis")
+BR()
+
+L("### 5a. Top confusion pairs")
+BR()
+L("_Every misclassification ranked by frequency (file-pooled). `GT → Predicted` reads: files truly GT were labelled Predicted._")
+BR()
+if (length(top_pairs) == 0) {
+  L("_No misclassifications found._")
+} else {
+  conf_tbl <- data.frame(
+    `GT → Predicted` = names(top_pairs),
+    Count            = as.integer(top_pairs),
+    check.names      = FALSE, stringsAsFactors = FALSE
+  )
+  total_wrong <- sum(conf_tbl$Count)
+  conf_tbl$`% of errors` <- sapply(conf_tbl$Count, function(n) pct(n, total_wrong))
+  L(md_table(conf_tbl))
+  BR()
+  L("![Top misclassification patterns](fp_fn.png)")
+}
+BR()
+
+L("### 5b. Error rate by file extension")
+BR()
+L("_Extensions with fewer than 5 annotated files excluded. Sorted by total error count._")
+BR()
+if (is.null(ext_stats) || nrow(ext_stats) == 0) {
+  L("_No extension data available._")
+} else {
+  ext_tbl <- data.frame(
+    Extension    = ext_stats$ext,
+    `N files`    = ext_stats$n_files,
+    `N errors`   = ext_stats$n_errors,
+    `Error rate` = sapply(ext_stats$error_rate, fmt1),
+    `Top pair`   = ext_stats$top_pair,
+    check.names  = FALSE, stringsAsFactors = FALSE
+  )
+  L(md_table(ext_tbl))
+  BR()
+  L("![Error rate by file extension](ext_errors.png)")
+}
+BR()
+L("---")
+BR()
+
+# ── 6. Downstream Pipeline Impact ────────────────────────────────────────────
+
+L("## 6. Downstream Pipeline Impact — `data` Classification")
+BR()
+L("- **False positives** (non-data predicted as `data`): column extraction runs on the wrong file.")
+L("- **False negatives** (`data` predicted as something else): dataset silently skipped — the more costly error.")
+BR()
+
+L("### 6a. False positives — non-data files predicted as `data`")
+BR()
+L(sprintf("_**%d files** predicted as `data` but are not._", nrow(data_fp)))
+BR()
+if (nrow(data_fp) > 0) {
+  fp_by_class <- sort(table(data_fp$type_gt), decreasing = TRUE)
+  L(md_table(data.frame(
+    `True class` = names(fp_by_class), Count = as.integer(fp_by_class),
+    `% of FPs`   = sapply(as.integer(fp_by_class), function(n) pct(n, nrow(data_fp))),
+    check.names  = FALSE, stringsAsFactors = FALSE
+  )))
+} else { L("_None._") }
+BR()
+
+L("### 6b. False negatives — `data` files missed")
+BR()
+L(sprintf("_**%d data files** not predicted as `data`, skipped by column extraction._", nrow(data_fn)))
+BR()
+if (nrow(data_fn) > 0) {
+  fn_by_class <- sort(table(data_fn$type), decreasing = TRUE)
+  L(md_table(data.frame(
+    `Predicted as` = names(fn_by_class), Count = as.integer(fn_by_class),
+    `% of FNs`     = sapply(as.integer(fn_by_class), function(n) pct(n, nrow(data_fn))),
+    check.names    = FALSE, stringsAsFactors = FALSE
+  )))
+} else { L("_None._") }
+BR()
+L("---")
+BR()
+
+# ── 7. Paper-Level Reliability ────────────────────────────────────────────────
+
+L("## 7. Paper-Level Reliability")
+BR()
+L("_Each paper weighted equally. SD = standard deviation across papers._")
+BR()
+
+kap_vals <- per_paper_full$kappa[!is.na(per_paper_full$kappa)]
+f1_vals  <- per_paper_full$macro_f1[!is.na(per_paper_full$macro_f1)]
+mcc_vals <- per_paper_full$mcc[!is.na(per_paper_full$mcc)]
+
+L("| Metric | Mean | Median | SD | Min | Max |")
+L("|---|---|---|---|---|---|")
+L(sprintf("| **Cohen's κ** | %s | %s | %s | %s | %s |",
+  fmt3(mean(kap_vals)), fmt3(median(kap_vals)), fmt3(sd(kap_vals)),
+  fmt3(min(kap_vals)),  fmt3(max(kap_vals))))
+L(sprintf("| **Macro F1** | %s | %s | %s | %s | %s |",
+  fmt1(mean(f1_vals)),  fmt1(median(f1_vals)),  fmt1(sd(f1_vals)),
+  fmt1(min(f1_vals)),   fmt1(max(f1_vals))))
+L(sprintf("| **MCC** | %s | %s | %s | %s | %s |",
+  fmt3(mean(mcc_vals)), fmt3(median(mcc_vals)), fmt3(sd(mcc_vals)),
+  fmt3(min(mcc_vals)),  fmt3(max(mcc_vals))))
+L(sprintf("| **Type accuracy** | %s | %s | %s | %s | %s |",
+  fmt1(mean(type_vals)),  fmt1(median(type_vals)),  fmt1(sd(type_vals)),
+  fmt1(min(type_vals)),   fmt1(max(type_vals))))
+BR()
+L("![Per-paper kappa distribution](kappa_dist.png)")
+BR()
+L("![Per-paper type accuracy distribution](paper_dist.png)")
+BR()
+L("![Paper size vs accuracy scatter](paper_scatter.png)")
+BR()
+
+breaks <- c(0, 50, 70, 85, 95, 100)
+labels <- c("<50%", "50–70%", "70–85%", "85–95%", "95–100%")
+bucket <- cut(type_vals, breaks = breaks, include.lowest = TRUE, right = TRUE, labels = labels)
+bucket_counts <- table(factor(bucket, levels = labels))
+L("**Type accuracy distribution across papers:**")
+BR()
+L("| Bucket | Papers |")
+L("|---|---|")
+for (i in seq_along(labels))
+  L(sprintf("| %s | %d |", labels[i], bucket_counts[[labels[i]]]))
+BR()
+
+bad_papers <- per_paper_full[!is.na(per_paper_full$type_acc) & per_paper_full$type_acc < 50, ]
+bad_papers <- bad_papers[order(bad_papers$type_acc), ]
+L("### 7a. Low-accuracy papers (<50% type accuracy)")
+BR()
+L(sprintf("_%d papers below 50%%._", nrow(bad_papers)))
+BR()
+if (nrow(bad_papers) == 0) {
+  L("_None._")
+} else {
+  L(md_table(data.frame(
+    Paper       = bad_papers$paper_id,
+    `Files GT`  = bad_papers$n_files,
+    `Type acc`  = sapply(bad_papers$type_acc, fmt1),
+    `κ`         = sapply(bad_papers$kappa,    fmt3),
+    `Top error` = bad_papers$top_err,
+    `Top ext`   = bad_papers$top_ext,
+    check.names = FALSE, stringsAsFactors = FALSE
+  )))
+}
+BR()
+
+L("### 7b. Per-paper breakdown")
+BR()
+L(md_table(data.frame(
+  Paper       = per_paper_full$paper_id,
+  `N files`   = per_paper_full$n_files,
+  `κ`         = sapply(per_paper_full$kappa,    fmt3),
+  `Macro F1`  = sapply(per_paper_full$macro_f1, fmt1),
+  `MCC`       = sapply(per_paper_full$mcc,      fmt3),
+  `Type acc`  = sapply(per_paper_full$type_acc, fmt1),
+  `Group acc` = sapply(per_paper_full$group_acc, fmt1),
+  `DG acc`    = sapply(per_paper_full$dg_acc,    fmt1),
+  check.names = FALSE, stringsAsFactors = FALSE
+)))
+BR()
+L("---")
+BR()
+
+# ── 8. Misclassified Files ────────────────────────────────────────────────────
+
+L("## 8. Misclassified Files")
+BR()
+L("### 8a. Type wrong")
+BR()
+wrong_type <- acc[!is.na(acc$type_gt) & !is.na(acc$type) & acc$type_gt != acc$type, ]
+if (nrow(wrong_type) == 0) {
+  L("_No type misclassifications._")
+} else {
+  wrong_tbl <- data.frame(
+    Paper         = wrong_type$paper_id,
+    File          = wrong_type$rel_path,
+    `GT type`     = wrong_type$type_gt,
+    `Pred type`   = wrong_type$type,
+    `GT group`    = if ("group_gt"     %in% names(wrong_type)) wrong_type$group_gt    else NA_character_,
+    `Pred group`  = if ("group"        %in% names(wrong_type)) wrong_type$group       else NA_character_,
+    `type_source` = if ("type_source"  %in% names(wrong_type)) wrong_type$type_source else NA_character_,
+    check.names   = FALSE, stringsAsFactors = FALSE
+  )
+  L(md_table(wrong_tbl[order(wrong_tbl$Paper, wrong_tbl$`GT type`), ]))
+}
+BR()
+
+L("### 8b. Group wrong (type correct)")
+BR()
+wrong_group <- acc[
+  !is.na(acc$type_gt) & acc$type_gt == "data" &
+  !is.na(acc$type)    & acc$type    == "data" &
+  !is.na(acc$group_gt) & !is.na(acc$group) &
+  acc$group_gt != acc$group, ]
+if (nrow(wrong_group) == 0) {
+  L("_No group misclassifications._")
+} else {
+  wg_tbl <- data.frame(
+    Paper         = wrong_group$paper_id,
+    File          = wrong_group$rel_path,
+    `GT group`    = wrong_group$group_gt,
+    `Pred group`  = wrong_group$group,
+    `type_source` = if ("type_source" %in% names(wrong_group)) wrong_group$type_source else NA_character_,
+    check.names   = FALSE, stringsAsFactors = FALSE
+  )
+  L(md_table(wg_tbl[order(wg_tbl$Paper, wg_tbl$`GT group`), ]))
+}
+BR()
+
+# ── Write MD ──────────────────────────────────────────────────────────────────
+
+run_dir  <- file.path(REPORT_DIR, paste0("normal_report_", date_str))
+dir.create(run_dir, recursive = TRUE, showWarnings = FALSE)
+out_path <- file.path(run_dir, "report.md")
+writeLines(lines, out_path)
+cat(sprintf("  [report] written to: %s\n", out_path))
+
+# ── Visualisations ────────────────────────────────────────────────────────────
+
+# ── Plot 1: File-pooled per-class P/R/F1 bar ─────────────────────────────────
+
+png_metrics <- file.path(run_dir, "metrics.png")
+png(png_metrics, width = 900, height = 500, res = 100)
+cls_names <- class_metrics$class
+mat <- rbind(class_metrics$precision / 100, class_metrics$recall / 100,
+             class_metrics$f1 / 100)
+mat[is.na(mat)] <- 0
+old_par <- par(mar = c(6, 4.5, 3, 1))
+barplot(mat, beside = TRUE, names.arg = cls_names, ylim = c(0, 1),
+        col = c("#4C72B0", "#55A868", "#C44E52"), border = NA,
+        ylab = "Score", main = "Per-Class Precision / Recall / F1 (file-pooled)", las = 2,
+        cex.names = 0.85)
+abline(h = seq(0, 1, 0.2), col = "grey85")
+barplot(mat, beside = TRUE, col = c("#4C72B0", "#55A868", "#C44E52"),
+        border = NA, add = TRUE, axes = FALSE, names.arg = rep("", length(cls_names)))
+legend("topright", legend = c("Precision", "Recall", "F1"),
+       fill = c("#4C72B0", "#55A868", "#C44E52"), border = NA, bty = "n")
+par(old_par); invisible(dev.off())
+cat(sprintf("  [plot]   written to: %s\n", png_metrics))
+
+# ── Plot 2: Paper-averaged per-class F1 box plots ────────────────────────────
+
+png_metrics_pa <- file.path(run_dir, "metrics_pa.png")
+png(png_metrics_pa, width = 900, height = 520, res = 100)
+old_par <- par(mar = c(6, 4.5, 3.5, 1))
+cls_order <- all_types
+f1_by_class <- lapply(cls_order, function(cls) {
+  per_paper_class_f1$f1[per_paper_class_f1$class == cls]
+})
+boxplot(f1_by_class, names = cls_order, ylim = c(0, 100),
+        col = "#4C72B0", border = "#2a4a7f", pch = 19, cex = 0.6,
+        ylab = "F1 (%)", main = "Per-Class F1 — Distribution Across Papers (paper-averaged)",
+        las = 2, cex.names = 0.85, outline = TRUE)
+# overlay file-pooled F1 as red points
+fp_f1_ordered <- sapply(cls_order, function(cls)
+  class_metrics$f1[class_metrics$class == cls])
+points(seq_along(cls_order), fp_f1_ordered, pch = 18, col = "#C44E52", cex = 1.4)
+# overlay paper-averaged mean as orange points
+pa_f1_ordered <- sapply(cls_order, function(cls)
+  pa_class_metrics$pa_f1[pa_class_metrics$class == cls])
+points(seq_along(cls_order), pa_f1_ordered, pch = 23, bg = "#FF9500", col = "#CC7700", cex = 1.2)
+abline(h = seq(0, 100, 20), col = "grey88", lty = 1)
+legend("bottomright",
+       legend = c("Paper distribution (box)", "Paper-avg mean", "File-pooled F1"),
+       pch    = c(22, 23, 18),
+       pt.bg  = c("#4C72B0", "#FF9500", NA),
+       col    = c("#2a4a7f", "#CC7700", "#C44E52"),
+       pt.cex = c(1.5, 1.2, 1.4), bty = "n", cex = 0.85)
+par(old_par); invisible(dev.off())
+cat(sprintf("  [plot]   written to: %s\n", png_metrics_pa))
+
+# ── Plot 3: File-pooled confusion matrix ─────────────────────────────────────
+
+png_conf <- file.path(run_dir, "confusion.png")
+png(png_conf, width = 700, height = 620, res = 100)
+heatmap_plot(as.matrix(cm), "Type Confusion Matrix — File-pooled (row-normalised)",
+             subtitle = "Each file weighted equally; large repos dominate")
+invisible(dev.off())
+cat(sprintf("  [plot]   written to: %s\n", png_conf))
+
+# ── Plot 4: Paper-averaged confusion matrix ───────────────────────────────────
+
+png_conf_pa <- file.path(run_dir, "confusion_pa.png")
+png(png_conf_pa, width = 700, height = 620, res = 100)
+heatmap_plot(pa_cm_norm, "Type Confusion Matrix — Paper-averaged (mean row proportions)",
+             subtitle = "Each paper weighted equally regardless of file count")
+invisible(dev.off())
+cat(sprintf("  [plot]   written to: %s\n", png_conf_pa))
+
+# ── Plot 5: Paper-averaged vs file-pooled summary comparison ─────────────────
+
+png_compare <- file.path(run_dir, "summary_compare.png")
+png(png_compare, width = 750, height = 480, res = 100)
+old_par <- par(mar = c(5, 5, 3.5, 1))
+metrics_lab <- c("Accuracy", "Macro F1", "κ × 100", "MCC × 100")
+pa_vals  <- c(pa_accuracy, pa_macro_f1, pa_kappa * 100, pa_mcc * 100)
+fp_vals  <- c(fp_stats$accuracy, macro_f1, kappa * 100, mcc * 100)
+x <- barplot(rbind(pa_vals, fp_vals), beside = TRUE,
+             names.arg = metrics_lab, ylim = c(0, 115),
+             col = c("#4C72B0", "#C44E52"), border = NA,
+             ylab = "Score (%, or ×100 for κ/MCC)",
+             main = "Paper-averaged vs File-pooled — Summary Metrics",
+             las = 1, cex.names = 0.9)
+abline(h = seq(0, 100, 20), col = "grey88")
+text(x[1, ], pa_vals + 2.5, sprintf("%.1f", pa_vals), cex = 0.8, col = "#4C72B0")
+text(x[2, ], fp_vals + 2.5, sprintf("%.1f", fp_vals), cex = 0.8, col = "#C44E52")
+legend("topright", legend = c("Paper-averaged (primary)", "File-pooled (secondary)"),
+       fill = c("#4C72B0", "#C44E52"), border = NA, bty = "n", cex = 0.9)
+par(old_par); invisible(dev.off())
+cat(sprintf("  [plot]   written to: %s\n", png_compare))
+
+# ── Plot 6: Per-paper kappa distribution ─────────────────────────────────────
+
+png_kappa <- file.path(run_dir, "kappa_dist.png")
+png(png_kappa, width = 800, height = 480, res = 100)
+old_par <- par(mar = c(5, 4, 3, 1))
+h_k <- hist(kap_vals, breaks = seq(-0.1, 1.05, by = 0.05), plot = FALSE)
+plot(NULL, xlim = c(-0.1, 1.05), ylim = c(0, max(h_k$counts) + 1),
+     xlab = "Cohen's κ (per paper)", ylab = "Number of papers",
+     main = sprintf("Per-Paper Cohen's κ  (mean=%.3f  median=%.3f)",
+                    mean(kap_vals), median(kap_vals)), las = 1)
+# shade interpretation bands
+rect(-0.1, 0, 0.20, max(h_k$counts)+1, col = "#FFE5E5", border = NA)
+rect( 0.20, 0, 0.40, max(h_k$counts)+1, col = "#FFF3CD", border = NA)
+rect( 0.40, 0, 0.60, max(h_k$counts)+1, col = "#FFF9C4", border = NA)
+rect( 0.60, 0, 0.80, max(h_k$counts)+1, col = "#E8F5E9", border = NA)
+rect( 0.80, 0, 1.05, max(h_k$counts)+1, col = "#E3F2FD", border = NA)
+rect(h_k$breaks[-length(h_k$breaks)], 0, h_k$breaks[-1], h_k$counts,
+     col = "#4C72B0", border = "white")
+abline(v = mean(kap_vals),   col = "#C44E52", lwd = 2, lty = 2)
+abline(v = median(kap_vals), col = "#55A868", lwd = 2, lty = 2)
+mtext(c("slight", "fair", "moderate", "substantial", "almost\nperfect"),
+      side = 3, at = c(0.05, 0.30, 0.50, 0.70, 0.925),
+      cex = 0.65, col = "grey50", line = -0.5)
+legend("topleft",
+       legend = c(sprintf("Mean   %.3f", mean(kap_vals)),
+                  sprintf("Median %.3f", median(kap_vals))),
+       col = c("#C44E52", "#55A868"), lwd = 2, lty = 2, bty = "n")
+par(old_par); invisible(dev.off())
+cat(sprintf("  [plot]   written to: %s\n", png_kappa))
+
+# ── Plot 7: Per-paper type accuracy distribution ──────────────────────────────
+
+png_dist <- file.path(run_dir, "paper_dist.png")
+png(png_dist, width = 800, height = 480, res = 100)
+old_par <- par(mar = c(5, 4, 3, 1))
+h_dist <- hist(type_vals, breaks = seq(0, 100, by = 5), plot = FALSE)
+plot(NULL, xlim = c(0, 100), ylim = c(0, max(h_dist$counts) + 1),
+     xlab = "Type accuracy (%)", ylab = "Number of papers",
+     main = sprintf("Per-Paper Type Accuracy  (mean=%.1f%%  median=%.1f%%)",
+                    mean(type_vals), median(type_vals)), las = 1)
+rect(h_dist$breaks[-length(h_dist$breaks)], 0, h_dist$breaks[-1], h_dist$counts,
+     col = "#4C72B0", border = "white")
+abline(v = mean(type_vals),   col = "#C44E52", lwd = 2, lty = 2)
+abline(v = median(type_vals), col = "#55A868", lwd = 2, lty = 2)
+legend("topleft",
+       legend = c(sprintf("Mean   %.1f%%", mean(type_vals)),
+                  sprintf("Median %.1f%%", median(type_vals))),
+       col = c("#C44E52", "#55A868"), lwd = 2, lty = 2, bty = "n")
+par(old_par); invisible(dev.off())
+cat(sprintf("  [plot]   written to: %s\n", png_dist))
+
+# ── Plot 8: Paper size vs accuracy scatter ────────────────────────────────────
+
+png_scatter <- file.path(run_dir, "paper_scatter.png")
+png(png_scatter, width = 800, height = 500, res = 100)
+old_par <- par(mar = c(5, 4.5, 3.5, 1))
+plot(per_paper_full$n_files, per_paper_full$type_acc,
+     pch = 19, col = "#4C72B080", cex = 1.1,
+     xlab = "Number of annotated files (paper size)",
+     ylab = "Type accuracy (%)",
+     main = "Paper Size vs Classification Accuracy",
+     las = 1)
+# highlight the largest papers
+thresh <- quantile(per_paper_full$n_files, 0.90)
+big <- per_paper_full[per_paper_full$n_files >= thresh, ]
+points(big$n_files, big$type_acc, pch = 19, col = "#C44E52", cex = 1.3)
+text(big$n_files, big$type_acc, labels = big$n_files,
+     pos = 3, cex = 0.7, col = "#C44E52")
+abline(lm(type_acc ~ n_files, data = per_paper_full),
+       col = "#55A868", lwd = 2, lty = 2)
+legend("bottomright",
+       legend = c("Paper", "Top 10% largest (labelled)", "Linear trend"),
+       pch    = c(19, 19, NA), lty = c(NA, NA, 2),
+       col    = c("#4C72B0", "#C44E52", "#55A868"),
+       pt.cex = c(1.1, 1.3, NA), lwd = c(NA, NA, 2), bty = "n", cex = 0.85)
+par(old_par); invisible(dev.off())
+cat(sprintf("  [plot]   written to: %s\n", png_scatter))
+
+# ── Plot 9: Top FP/FN confusion pairs ────────────────────────────────────────
+
+if (length(top_pairs) > 0) {
+  png_fp_fn <- file.path(run_dir, "fp_fn.png")
+  n_show    <- min(15, length(top_pairs))
+  png(png_fp_fn, width = 900, height = 400 + n_show * 20, res = 100)
+  old_par <- par(mar = c(4, 14, 3, 2))
+  barplot(as.integer(top_pairs[n_show:1]), names.arg = names(top_pairs)[n_show:1],
+          horiz = TRUE, las = 1, col = "#C44E52", border = NA,
+          xlab = "Count", main = "Top Misclassification Patterns (GT → Predicted)",
+          cex.names = 0.82)
+  par(old_par); invisible(dev.off())
+  cat(sprintf("  [plot]   written to: %s\n", png_fp_fn))
+}
+
+# ── Plot 10: Extension error rate ─────────────────────────────────────────────
+
+if (!is.null(ext_stats) && nrow(ext_stats) > 0) {
+  png_ext <- file.path(run_dir, "ext_errors.png")
+  n_show  <- min(20, nrow(ext_stats))
+  top_ext <- ext_stats[seq_len(n_show), ]
+  top_ext <- top_ext[order(top_ext$error_rate), ]
+  png(png_ext, width = 900, height = 400 + n_show * 18, res = 100)
+  old_par <- par(mar = c(4, 7, 3, 5))
+  bp <- barplot(top_ext$error_rate, names.arg = top_ext$ext,
+                horiz = TRUE, las = 1, col = "#DD8452", border = NA,
+                xlab = "Error rate (%)", xlim = c(0, 100),
+                main = "Error Rate by File Extension (top 20 by error count)",
+                cex.names = 0.82)
+  text(x = top_ext$error_rate + 1.5, y = bp,
+       labels = sprintf("%d/%d", top_ext$n_errors, top_ext$n_files),
+       adj = 0, cex = 0.72, col = "grey30")
+  par(old_par); invisible(dev.off())
+  cat(sprintf("  [plot]   written to: %s\n", png_ext))
+}
+
+# ── Plot 11: Group confusion matrix ───────────────────────────────────────────
+
+if (!is.null(cm_grp) && nrow(cm_grp) > 1) {
+  png_grp <- file.path(run_dir, "group_conf.png")
+  sz      <- max(500, 100 * nrow(cm_grp) + 200)
+  png(png_grp, width = sz, height = sz, res = 100)
+  heatmap_plot(cm_grp, "Group Confusion Matrix (row-normalised, data files only)")
+  invisible(dev.off())
+  cat(sprintf("  [plot]   written to: %s\n", png_grp))
+}
+
+# ── Plot 12: DG confusion matrix ──────────────────────────────────────────────
+
+if (!is.null(cm_dg) && nrow(cm_dg) > 1) {
+  png_dg <- file.path(run_dir, "dg_conf.png")
+  sz     <- max(500, 100 * nrow(cm_dg) + 200)
+  png(png_dg, width = sz, height = sz, res = 100)
+  heatmap_plot(cm_dg, "data_granularity Confusion Matrix (row-normalised, data files only)")
+  invisible(dev.off())
+  cat(sprintf("  [plot]   written to: %s\n", png_dg))
+}
+
+# ── Plot 13: data_format confusion matrix ─────────────────────────────────────
+
+if (!is.null(cm_df) && nrow(cm_df) > 1) {
+  png_df <- file.path(run_dir, "df_conf.png")
+  sz     <- max(500, 100 * nrow(cm_df) + 200)
+  png(png_df, width = sz, height = sz, res = 100)
+  heatmap_plot(cm_df, "data_format Confusion Matrix (row-normalised, data files only)")
+  invisible(dev.off())
+  cat(sprintf("  [plot]   written to: %s\n", png_df))
+}
