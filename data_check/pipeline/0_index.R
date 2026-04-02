@@ -32,6 +32,8 @@ AGGREGATE_EXT_OVERRIDE <- c(
   do = "code", sps = "supplemental", jl = "code", js = "code", sh = "code",
   bash = "code", pl = "code", rb = "code", cpp = "code", c = "code",
   h = "code", java = "code", scala = "code", sql = "code",
+  exe = "software", app = "software", jar = "software",
+  msi = "software", dmg = "software",
   jpg = "asset", jpeg = "asset", png = "asset", gif = "asset",
   bmp = "asset", tiff = "asset", tif = "asset", svg = "asset",
   mp4 = "asset", avi = "asset", mov = "asset", mp3 = "asset",

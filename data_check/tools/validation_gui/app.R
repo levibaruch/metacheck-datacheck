@@ -26,13 +26,15 @@ source(file.path(getOption("dc_root"), "tools", "validation_gui", "preview.R"))
 
 TYPE_MAP <- c(
   "1" = "data", "2" = "code", "3" = "codebook", "4" = "supplemental",
-  "5" = "readme", "6" = "asset", "7" = "output", "8" = "other"
+  "5" = "readme", "6" = "asset", "7" = "output", "8" = "other",
+  "9" = "software"
 )
 VALID_TYPES <- unname(TYPE_MAP)
 
 TYPE_ABBREV <- c(
   data = "dat", code = "cod", codebook = "cbk", supplemental = "sup",
-  readme = "rdm", asset = "ast", other = "oth", output = "out"
+  readme = "rdm", asset = "ast", other = "oth", output = "out",
+  software = "sfw"
 )
 
 # ── JavaScript ────────────────────────────────────────────────────────────────
@@ -222,7 +224,7 @@ document.addEventListener("DOMContentLoaded", function() {
       return;
     }
     var k = e.key.toLowerCase();
-    if (["1","2","3","4","5","6","7","8","i","c","g"].indexOf(k) !== -1) {
+    if (["1","2","3","4","5","6","7","8","9","i","c","g"].indexOf(k) !== -1) {
       e.preventDefault();
       Shiny.setInputValue("key_press", {key: k, ts: Date.now()}, {priority: "event"});
     }
@@ -316,6 +318,7 @@ details > summary { font-size:0.75em; font-weight:700; letter-spacing:0.05em;
 .tbadge-asset        { background:#fce4ec; color:#880e4f; }
 .tbadge-other        { background:#eceff1; color:#455a64; }
 .tbadge-output       { background:#e0f7fa; color:#006064; }
+.tbadge-software     { background:#fff3e0; color:#e65100; }
 
 /* Data format sub-type badges — light */
 .tbadge-df-tabular { background:#ecf5ec; color:#388e3c; font-size:0.72em; padding:1px 5px; border-radius:3px; font-weight:600; margin-left:3px; }
@@ -333,6 +336,7 @@ details > summary { font-size:0.75em; font-weight:700; letter-spacing:0.05em;
 .tbtn-asset.tbtn-active        { border-color:#880e4f !important; background:rgba(136,14,79,0.1) !important;   color:#560027 !important; box-shadow:0 0 8px rgba(136,14,79,0.2) !important; }
 .tbtn-other.tbtn-active        { border-color:#455a64 !important; background:rgba(69,90,100,0.1) !important;   color:#263238 !important; box-shadow:0 0 8px rgba(69,90,100,0.2) !important; }
 .tbtn-output.tbtn-active       { border-color:#006064 !important; background:rgba(0,96,100,0.1) !important;    color:#004d40 !important; box-shadow:0 0 8px rgba(0,96,100,0.2) !important; }
+.tbtn-software.tbtn-active     { border-color:#e65100 !important; background:rgba(230,101,0,0.1) !important;   color:#bf360c !important; box-shadow:0 0 8px rgba(230,101,0,0.2) !important; }
 
 /* File header — light */
 .file-hdr         { padding:11px 16px 10px; border-bottom:1px solid #dee2e6; background:#f8f9fa; margin-bottom:10px; }
@@ -423,6 +427,7 @@ hr { border-color:#dee2e6 !important; margin:8px 0 !important; }
 [data-theme='dark'] .tbadge-asset        { background:rgba(244,143,177,0.22); color:#fce4ec; }
 [data-theme='dark'] .tbadge-other        { background:rgba(144,164,174,0.22); color:#b0bec5; }
 [data-theme='dark'] .tbadge-output       { background:rgba(0,188,212,0.22);   color:#80deea; }
+[data-theme='dark'] .tbadge-software     { background:rgba(255,183,77,0.22);  color:#ffcc80; }
 [data-theme='dark'] .tbadge-df-tabular  { background:rgba(102,187,106,0.18); color:#a5d6a7; }
 [data-theme='dark'] .tbadge-df-raw      { background:rgba(255,183,77,0.18);  color:#ffe082; }
 
@@ -438,6 +443,7 @@ hr { border-color:#dee2e6 !important; margin:8px 0 !important; }
 [data-theme='dark'] .tbtn-asset.tbtn-active        { border-color:#f48fb1 !important; background:rgba(244,143,177,0.22) !important; color:#fce4ec !important; box-shadow:0 0 10px rgba(244,143,177,0.25) !important; }
 [data-theme='dark'] .tbtn-other.tbtn-active        { border-color:#90a4ae !important; background:rgba(144,164,174,0.22) !important; color:#b0bec5 !important; box-shadow:0 0 10px rgba(144,164,174,0.25) !important; }
 [data-theme='dark'] .tbtn-output.tbtn-active       { border-color:#00bcd4 !important; background:rgba(0,188,212,0.22) !important;  color:#80deea !important; box-shadow:0 0 10px rgba(0,188,212,0.25) !important; }
+[data-theme='dark'] .tbtn-software.tbtn-active     { border-color:#ffb300 !important; background:rgba(255,179,0,0.22) !important;  color:#ffe082 !important; box-shadow:0 0 10px rgba(255,179,0,0.25) !important; }
 
 /* Granularity buttons — light */
 .dg-btn { border:1.5px solid rgba(0,0,0,0.13) !important; background:rgba(0,0,0,0.02) !important; color:rgba(0,0,0,0.45) !important; font-size:0.8em !important; padding:3px 10px !important; }
@@ -803,6 +809,7 @@ server <- function(input, output, session) {
       "6" = { rv$selected_type <- "asset" },
       "7" = { rv$selected_type <- "output" },
       "8" = { rv$selected_type <- "other" },
+      "9" = { rv$selected_type <- "software" },
       "i" = {
         if (!is.na(rv$selected_type) && rv$selected_type == "data")
           rv$data_granularity_val <- if (rv$data_granularity_val == "individual") "" else "individual"
