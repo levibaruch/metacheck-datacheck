@@ -149,6 +149,10 @@ for (pid in eligible) {
 
   if (is.null(gt) || is.null(str) || nrow(gt) == 0) next
 
+  # Skip partially annotated papers — only include papers where every file
+  # in structure.csv has a corresponding GT row
+  if (!all(str$rel_path %in% gt$rel_path)) next
+
   keep_str <- intersect(
     c("rel_path", "type", "group", "data_granularity", "data_format", "type_source"),
     names(str)

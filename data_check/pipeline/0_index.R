@@ -16,7 +16,7 @@ source("data_check/pipeline/helper.R")
 source("data_check/pipeline/prompts.R")
 
 llm_use(TRUE)
-llm_model("ollama/gpt-oss:20b-cloud")
+llm_model("ollama/gpt-oss:20b")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
