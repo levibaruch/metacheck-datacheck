@@ -350,6 +350,9 @@ llm_batch <- function(paths, system_prompt, user_prefix, key_col, extra_cols,
   all_parsed <- vector("list", length(chunks))
 
   for (i in seq_along(chunks)) {
+    if (exists("SKIP_FILE") && file.exists(SKIP_FILE))
+      stop("user_skip: skip signal detected — user requested paper be aborted")
+
     chunk_paths <- chunks[[i]]
     chunk_text  <- paste(seq_along(chunk_paths), chunk_paths, sep = ". ", collapse = "\n")
     chunk_input <- paste0(user_prefix, "\n\n", chunk_text,
