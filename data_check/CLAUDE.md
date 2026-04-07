@@ -68,6 +68,7 @@ R (base R, no new packages): Follow standard conventions
 - 029-software-file-type: Added R (base R only — no new packages) + `metacheck` (`llm_batch()`), `shiny` + `bslib` (validation GUI) — all already installed
 - 028-data-format-subtype: Added R (base R only — no new packages) + `haven`, `readxl`, `jsonlite`, `tools` (base) — all already installed; `metacheck` (`llm_batch()`)
 - 027-llm-retry-logging: Added R (base R only — no new packages) + `pipeline/helper.R` (`llm_batch()`), `pipeline/0_index.R` (constants + fallback rules), `docs/output-schemas.md`
+- 026-add-output-file-type: Added R (base R — no new packages) + `metacheck` (`llm_batch()`), `haven`, `readxl`, `jsonlite` — all already installed
 
 
 <!-- MANUAL ADDITIONS START -->

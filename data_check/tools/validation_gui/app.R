@@ -334,6 +334,10 @@ details > summary { font-size:0.75em; font-weight:700; letter-spacing:0.05em;
 .tbadge-df-tabular { background:#ecf5ec; color:#388e3c; font-size:0.72em; padding:1px 5px; border-radius:3px; font-weight:600; margin-left:3px; }
 .tbadge-df-raw     { background:#fff8e1; color:#f57c00; font-size:0.72em; padding:1px 5px; border-radius:3px; font-weight:600; margin-left:3px; }
 
+/* Data format sub-type badges — light */
+.tbadge-df-tabular { background:#ecf5ec; color:#388e3c; font-size:0.72em; padding:1px 5px; border-radius:3px; font-weight:600; margin-left:3px; }
+.tbadge-df-raw     { background:#fff8e1; color:#f57c00; font-size:0.72em; padding:1px 5px; border-radius:3px; font-weight:600; margin-left:3px; }
+
 /* Type buttons — light */
 .tbtn { border:1.5px solid rgba(0,0,0,0.13) !important; background:rgba(0,0,0,0.02) !important; color:rgba(0,0,0,0.45) !important; }
 .tbtn:hover { background:rgba(0,0,0,0.06) !important; color:rgba(0,0,0,0.75) !important; border-color:rgba(0,0,0,0.25) !important; }
