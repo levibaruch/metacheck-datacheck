@@ -39,3 +39,5 @@ data_check/psychds/*.csv
 data_check/_old/
 data_check/logs/
 ._*
+data_check/results/*.png
+data_check/results/*.md
