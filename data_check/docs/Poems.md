@@ -313,3 +313,42 @@ Twenty now. The series routes through Phase 2.
 The sentinel classifies the whole group as true.
 And SKIP_COLUMNS waits by the door, coat in hand:
 "Just index the files — columns can wait, as planned."
+
+---
+
+## 031 — Dataverse Source Support
+
+The data lived in only one place —
+OSF repositories, the sole case.
+But the world keeps its research in many a vault,
+Dataverse among them, no longer an exalt.
+Now `paper_path()` knows the source it was fed,
+whether OSF or Dataverse, the pipeline's well-read.
+XML metadata harvested, papers retrieved,
+another archive's treasure now believed.
+
+---
+
+## 032 — Source-Aware Storage
+
+Each paper's outputs, agnostic, alone,
+sat in `outputs/`, a single unknown zone.
+Now the directories remember their birth:
+`outputs/osf/<paper_id>/`, `outputs/dataverse/<paper_id>/` — their worth.
+The psychDS, the logs, the CSV rows,
+all organized by where the data flows.
+One pipeline, two sources, each in its place,
+reproducible storage, a source-aware space.
+
+---
+
+## 033 — LLM Prompt Refinements
+
+The prompts were good, but the model still squinted —
+misclassifying files, details hinted.
+A sentence refined, a clause rearranged,
+examples tightened, the threshold changed.
+No new code, no new packages in sight,
+just words on a page, tuned just right.
+The LLM whispers now what it should say,
+and fewer mistakes mark the classification day.

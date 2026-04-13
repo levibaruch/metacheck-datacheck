@@ -395,79 +395,131 @@ clean_llm_values <- function(df) {
 
 # Run an LLM prompt over a character vector in batches, joining results by a
 # key column.  Returns a data.frame with columns c(key_col, extra_cols).
+#
+# Args:
+#   paths         — character vector of file paths to classify (one row per path)
+#   system_prompt — LLM system prompt (role/task description)
+#   user_prefix   — text prepended to each chunk's numbered path list
+#   key_col       — name of the column the LLM echoes back as the join key (usually "path")
+#   extra_cols    — names of the classification columns expected in the LLM JSON response
+#   fallback_vals — named list; values used when the LLM omits a field for a specific row
+#   sentinel_cols — subset of extra_cols that receive LLM_SENTINEL_VAL (not fallback) on
+#                   total chunk failure, marking those rows as "LLM never answered"
+#   paper_id      — passed through to the error log only (for traceability)
+#   stage_name    — passed through to the error log only (e.g. "file_type", "col_type")
 llm_batch <- function(paths, system_prompt, user_prefix, key_col, extra_cols,
                       fallback_vals,
                       sentinel_cols = NULL,
                       paper_id      = NULL,
                       stage_name    = NULL) {
+  # Divide paths into fixed-size chunks (LLM_BATCH_SIZE = 20).
+  # Each chunk becomes one LLM call so prompts stay within the model's context window.
   chunks     <- split(paths, ceiling(seq_along(paths) / LLM_BATCH_SIZE))
-  all_parsed <- vector("list", length(chunks))
+  all_parsed <- vector("list", length(chunks))  # pre-allocated; filled in loop below
 
   for (i in seq_along(chunks)) {
+    # Honour a user-initiated abort: if a sentinel file exists, stop immediately
+    # rather than continuing to fire LLM calls for the rest of the paper.
     if (exists("SKIP_FILE") && file.exists(SKIP_FILE))
       stop("user_skip: skip signal detected — user requested paper be aborted")
 
     chunk_paths <- chunks[[i]]
+
+    # Build the numbered list that appears in the prompt, e.g.:
+    #   1. data/raw/survey.csv
+    #   2. data/raw/codebook.pdf
+    # The numbers let the model refer to items and help detect truncation.
     chunk_text  <- paste(seq_along(chunk_paths), chunk_paths, sep = ". ", collapse = "\n")
+
+    # Assemble the full user-turn message: caller-supplied prefix + numbered paths +
+    # strict JSON-only instruction.  The trailing instruction is appended here (not
+    # in the caller) so every llm_batch call enforces the same output contract.
     chunk_input <- paste0(user_prefix, "\n\n", chunk_text,
                           "\n\nReturn ONLY a JSON array with exactly ", length(chunk_paths),
                           " objects — one per path above. Echo every path character-for-character.",
                           " No truncation. No notes. No text outside the array.")
 
+    # The columns we must find in the parsed response.
     needed_cols    <- c(key_col, extra_cols)
+
+    # Pre-build a fallback data.frame for this chunk.  Used in two places:
+    #   1. Per-row: fill NAs left by merge when the LLM omitted a row's key.
+    #   2. Whole-chunk: returned when all retries are exhausted.
     chunk_fallback <- as.data.frame(
       c(list(paths = chunk_paths),
         setNames(lapply(fallback_vals, rep, length(chunk_paths)), extra_cols)),
       stringsAsFactors = FALSE
     )
-    names(chunk_fallback)[1] <- key_col
+    names(chunk_fallback)[1] <- key_col  # rename generic "paths" to the caller's key name
 
-    attempt       <- 1L
-    last_raw      <- NULL
-    last_err      <- NULL
-    last_fail_raw <- NULL
+    # ── Retry state ──────────────────────────────────────────────────────────
+    attempt       <- 1L    # current attempt number (1-indexed)
+    last_raw      <- NULL  # most recent raw LLM response object
+    last_err      <- NULL  # the error from the most recent failed parse attempt
+    last_fail_raw <- NULL  # raw response from the last *failed* attempt (for log)
     success       <- FALSE
 
     while (TRUE) {
+      # Respect an optional temperature override set by callers (e.g. the sweep runner).
+      # Falls back to the model's default when the option is not set.
       llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()
       raw        <- llm(system_prompt = system_prompt, text = chunk_input, params = llm_params)
       last_raw   <- raw
 
+      # Try to parse and validate the response.  tryCatch returns either the
+      # merged data.frame (success) or the error object (failure) — checked below.
       parsed <- tryCatch({
+        # extract_json() strips markdown fences; fromJSON parses the array;
+        # clean_llm_values() strips stray backtick characters from string fields.
         result <- clean_llm_values(jsonlite::fromJSON(extract_json(raw$answer), flatten = TRUE))
+
+        # Validate that the model returned all required columns.
         if (!all(needed_cols %in% names(result))) {
           stop("Response missing fields: ",
                paste(setdiff(needed_cols, names(result)), collapse = ", "))
         }
+
         # Deduplicate LLM response on the key column before merging — duplicate
         # echoed keys (e.g. same basename returned twice) cause a many-to-many
         # join that drops rows.  Keep first occurrence of each key.
         result <- result[!duplicated(result[[key_col]]), needed_cols, drop = FALSE]
+
+        # Left-join the LLM result onto the original chunk paths so that:
+        #   a) every input path is represented in the output (all.x = TRUE), and
+        #   b) paths the LLM silently dropped get NA filled with fallback_vals below.
         merged <- merge(
           data.frame(x = chunk_paths, stringsAsFactors = FALSE) |> setNames(key_col),
           result,
           by = key_col, all.x = TRUE
         )
+
+        # Fill any NAs introduced by missing rows with the caller-supplied fallback.
         for (col in extra_cols) merged[[col]][is.na(merged[[col]])] <- fallback_vals[[col]]
+
+        # merge() does not guarantee row order — restore the original chunk_paths order.
         merged[match(chunk_paths, merged[[key_col]]), ]
       }, error = function(e) e)
 
       if (!inherits(parsed, "error")) {
         success <- TRUE
-        break
+        break  # clean parse — exit retry loop
       }
 
+      # Parse failed — record state and decide whether to retry.
       last_err      <- parsed
       last_fail_raw <- raw
       if (attempt <= LLM_RETRY_LIMIT) {
         message(sprintf("\u2500\u2500 LLM chunk %d retry %d/%d \u2500\u2500", i, attempt, LLM_RETRY_LIMIT))
         attempt <- attempt + 1L
       } else {
-        break
+        break  # retry budget exhausted — fall through to failure handler
       }
     }
 
+    # ── Post-retry: record result or apply sentinel fallback ─────────────────
     if (success) {
+      # If we succeeded but only after retrying, log the details so we can
+      # review which prompts caused transient failures.
       if (attempt > 1L) {
         pid   <- if (!is.null(paper_id))   paper_id   else "<unknown>"
         stage <- if (!is.null(stage_name)) stage_name else "<unknown>"
@@ -482,7 +534,8 @@ llm_batch <- function(paths, system_prompt, user_prefix, key_col, extra_cols,
       }
       all_parsed[[i]] <- parsed
     } else {
-      # All retries exhausted — log the failure
+      # All retries exhausted — log the failure and substitute sentinel values
+      # so downstream stages can detect which rows were never answered by the LLM.
       pid   <- if (!is.null(paper_id))   paper_id   else "<unknown>"
       stage <- if (!is.null(stage_name)) stage_name else "<unknown>"
       dir.create(dirname(LLM_ERROR_LOG), recursive = TRUE, showWarnings = FALSE)
@@ -495,7 +548,10 @@ llm_batch <- function(paths, system_prompt, user_prefix, key_col, extra_cols,
           file = LLM_ERROR_LOG, append = TRUE)
       warning("Chunk ", i, " failed after ", LLM_RETRY_LIMIT, " retries: ",
               conditionMessage(last_err), "; using sentinel")
-      # Build error_fallback: sentinel_cols get LLM_SENTINEL_VAL, others get fallback_vals
+
+      # Build error_fallback: sentinel_cols get LLM_SENTINEL_VAL (a special marker
+      # meaning "LLM never classified this") while non-sentinel cols get their normal
+      # fallback_vals (a best-guess default that won't confuse downstream aggregation).
       error_fallback <- chunk_fallback
       for (col in extra_cols) {
         val <- if (col %in% sentinel_cols) LLM_SENTINEL_VAL else fallback_vals[[col]]
@@ -505,6 +561,7 @@ llm_batch <- function(paths, system_prompt, user_prefix, key_col, extra_cols,
     }
   }
 
+  # Combine all chunks back into a single data.frame with the same columns.
   do.call(rbind, all_parsed)
 }
 

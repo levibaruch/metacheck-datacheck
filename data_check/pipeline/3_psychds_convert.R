@@ -13,10 +13,20 @@ source("data_check/pipeline/helper.R")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-PSYCHDS_OUT_DIR    <- "./data_check/psychds"
-OUTPUT_DIR         <- "./data_check/outputs"
-DATA_DIR           <- "./data_check/data"
-GROUND_TRUTH_DIR   <- "./data_check/ground_truth"
+
+
+if (!exists("PSYCHDS_OUT_DIR")) {
+  PSYCHDS_OUT_DIR <- "./data_check/psychds"
+}
+if (!exists("OUTPUT_DIR")) {
+  OUTPUT_DIR <- "./data_check/outputs"
+}
+if (!exists("DATA_DIR")) {
+  DATA_DIR <- "./data_check/data"
+}
+if (!exists("GROUND_TRUTH_DIR")) {
+  GROUND_TRUTH_DIR <- "./data_check/ground_truth"
+}
 DATA_SIZE_LIMIT_MB <- 500
 PIPELINE_VERSION   <- "021"
 

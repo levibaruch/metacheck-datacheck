@@ -1,6 +1,6 @@
 # data_check Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-08
+Auto-generated from all feature plans. Last updated: 2026-04-09
 
 ## Active Technologies
 - R (base R only — no new packages; `haven`/`readxl`/`jsonlite` already present) + `llm_batch()`, `extract_json()` (existing helpers in `helper.R`); `jsonlite::fromJSON` (005-codebook-column-labelling)
@@ -50,6 +50,7 @@ Auto-generated from all feature plans. Last updated: 2026-04-08
 - CSV files on local filesystem; `data_check/data/dataverse/`, `data_check/outputs/`, `data_check/psychds/` (031-dataverse-source-support)
 - R (base R only — no new packages per constitution) + `haven`, `readxl`, `jsonlite`, `xml2`, `metacheck` — all already installed (032-source-aware-storage)
 - Local filesystem; CSV files; directory trees under `data/`, `outputs/`, `psychds/`, `ground_truth/` (032-source-aware-storage)
+- R (base R only) + None — prompt string edit only (033-llm-prompt-refinements)
 
 - R (base R, no new packages) + `helper.R` (`classify_col_type_rules()`), `0_index.R` (`COLUMN_TYPE_PROMPT`, `run_index()`) (004-reduce-unknown-coltypes)
 
@@ -69,9 +70,9 @@ tests/
 R (base R, no new packages): Follow standard conventions
 
 ## Recent Changes
+- 033-llm-prompt-refinements: Added R (base R only) + None — prompt string edit only
 - 032-source-aware-storage: Added R (base R only — no new packages per constitution) + `haven`, `readxl`, `jsonlite`, `xml2`, `metacheck` — all already installed
 - 031-dataverse-source-support: Added R (base R only — no new packages) + `metacheck` (`llm_batch()`), `haven`, `readxl`, `jsonlite`, `xml2` — all already installed
-- 029-software-file-type: Added R (base R only — no new packages) + `metacheck` (`llm_batch()`), `shiny` + `bslib` (validation GUI) — all already installed
 
 
 <!-- MANUAL ADDITIONS START -->

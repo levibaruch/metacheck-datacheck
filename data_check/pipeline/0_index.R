@@ -20,10 +20,10 @@ llm_model("ollama/gpt-oss:20b-cloud")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-DATA_DIR         <- "./data_check/data"
-OUTPUT_DIR       <- "./data_check/outputs"
-PSYCHDS_OUT_DIR  <- "./data_check/psychds"
-GROUND_TRUTH_DIR <- "./data_check/ground_truth"
+if (!exists("DATA_DIR"))         DATA_DIR         <- "./data_check/data"
+if (!exists("OUTPUT_DIR"))       OUTPUT_DIR       <- "./data_check/outputs"
+if (!exists("PSYCHDS_OUT_DIR"))  PSYCHDS_OUT_DIR  <- "./data_check/psychds"
+if (!exists("GROUND_TRUTH_DIR")) GROUND_TRUTH_DIR <- "./data_check/ground_truth"
 ARCHIVE_EXTS    <- c("zip", "gz", "tar", "tgz", "bz2", "xz")
 # Extension-based type overrides applied after aggregate sentinel expansion.
 # Maps lowercase file extension → definitive type for unambiguous file kinds.
@@ -86,10 +86,11 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
     paper_id  <- tools::file_path_sans_ext(sample(xml_files, 1))
     message("── Randomly selected paper: ", paper_id)
   }
+  print(paper_id)
 
   is_dv      <- is_dataverse_id(paper_id)
   source     <- if (is_dv) "dataverse" else "osf"
-
+  
   eff_dir <- if (!is.null(output_dir)) {
     dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
     output_dir
@@ -926,7 +927,7 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
       if (!ambiguous_idx[i]) return(NA_character_)
       x_noNA <- df[[names(df)[i]]]
       x_noNA <- x_noNA[!is.na(x_noNA)]
-      cap    <- if (isTRUE(is_numeric_vec[i])) 10L else 20L
+      cap    <- 20L
       uniq_v <- unique(x_noNA)[seq_len(min(cap, length(unique(x_noNA))))]
       paste(as.character(uniq_v), collapse = ", ")
     }, character(1))

@@ -33,6 +33,7 @@ data_check/ground_truth/
 data_check/psychds/*/
 data_check/psychds/*.csv
 !data_check/psychds/EXPERIMENTAL.txt
+data_check/results
 
 
 ./output
