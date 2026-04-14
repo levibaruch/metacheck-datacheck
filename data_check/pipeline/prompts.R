@@ -199,7 +199,7 @@ Echo every path exactly. Output ONLY the JSON array.'
  
 # AB TEST v1 (rule-based, 2026-04) — kept for comparison
 
-STRUCTURE_PROMPT_OLD <- 'You are classifying files in a psychology research data repository.
+STRUCTURE_PROMPT_v1 <- 'You are classifying files in a psychology research data repository.
 You will receive a file tree. For each path return a JSON array (same order).
 Each element: {"path": "<exact path>", "type": "<type>", "group": "<group>"}
 
@@ -351,7 +351,12 @@ code         : source file or notebook whose purpose is to generate analyses —
                scripts, syntax files, notebooks (.Rmd, .qmd, .ipynb)
 software     : program or config file whose purpose is to run the experiment —
                task runners, stimulus apps, compiled binaries (.exe, .app,
-               .jar, .msi, .dmg), experiment parameter/config files
+               .jar, .msi, .dmg), experiment parameter/config files.
+               Task/experiment runtime files → always software: E-Prime
+               (.ebs2, .es2, .wndpos, .edat, .edat2, .emrg), PsychoPy
+               (.psyexp), OpenSesame (.opensesame, .osexp).
+               Documents (.pdf, .docx, .doc, .txt, .rtf) are NEVER software,
+               even when inside experiment or task folders.
 output       : artefact produced by executing a script — rendered notebooks,
                figures, graphs, log files, SPSS output (.spv), computational
                byproducts. When provenance is ambiguous → supplemental.
@@ -422,7 +427,9 @@ Tabular files (.csv, .xlsx, .sav, .dta, .tsv, .dat):
 code vs software — use purpose, not extension:
   analysis / modelling / cleaning scripts → code
   experiment runners, stimulus apps, compiled binaries → software
-  config file serving experiment/task context → software
+  config file serving experiment/task context → software ONLY if it is a
+    structured config format (.yaml, .yml, .json, .cfg, .ini, .toml) or a
+    binary runtime file. Human-authored text documents are NOT config files.
   config file with "analysis", "model", or "params" in name → code
 
 "Supplemental Experiment N" / "Supplemental Study N" folders → group "shared"

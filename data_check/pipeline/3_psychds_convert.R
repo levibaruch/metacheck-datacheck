@@ -620,8 +620,8 @@ place_non_data_file <- function(src_path, file_type, filename, study_root) {
     dest    <- file.path(study_root, dest_nm)
     psychds_path <- dest_nm
   } else {
-    subdir  <- TYPE_TO_SUBDIR[[file_type]]
-    if (is.null(subdir)) subdir <- "documentation"
+    subdir  <- TYPE_TO_SUBDIR[[file_type]] # TODO Currently this works poorrly; since datafiles are not included here, most types fall back to documentation. I think at least 
+    if (is.null(subdir)) subdir <- "documentation" 
     dest    <- file.path(study_root, subdir, filename)
     psychds_path <- file.path(subdir, filename)
   }

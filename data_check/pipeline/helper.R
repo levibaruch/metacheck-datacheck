@@ -185,6 +185,14 @@ unpack_archive <- function(path) {
     tryCatch({
       if (ext == "zip") {
         utils::unzip(path, exdir = dest)
+      } else if (ext == "rar") {
+        # Requires unrar to be installed (e.g. brew install rar on macOS).
+        # system2 returns 127 when the binary is not found; non-zero → error.
+        ret <- system2("unrar", c("x", "-y", shQuote(normalizePath(path)),
+                                  shQuote(dest)),
+                       stdout = FALSE, stderr = FALSE)
+        if (ret != 0) stop("unrar exited with code ", ret,
+                           " (is unrar installed?)")
       } else {
         # tar, tgz, tar.gz, tar.bz2, tar.xz — untar auto-detects compression
         utils::untar(path, exdir = dest)
@@ -255,7 +263,9 @@ RAW_EXTENSIONS     <- c(
   # Video
   "mp4", "avi", "mov", "mkv", "wmv", "m4v", "flv", "webm", "3gp",
   # Generic binary
-  "bin", "raw"
+  "bin", "raw",
+  # Document formats — never tabular; guard against LLM mis-classifying a PDF as data
+  "pdf"
 )
 
 # Takes a character vector of lowercase file extensions (no leading dot).
@@ -783,6 +793,31 @@ parse_codebook <- function(path) {
           )
           if (is.null(raw) || nrow(raw) == 0) return(NULL)
         }
+
+        # ── Wide-format detection ─────────────────────────────────────────────
+        # Some codebooks are stored in wide format: variables as columns, statistics
+        # as rows (e.g. first column contains "mean", "sd", "label", ...).
+        # Detect by checking whether ≥50% of first-column values are known statistic
+        # names; if so, transpose so that variable names become the first column.
+        WIDE_STAT_NAMES <- c("mean", "sd", "se", "min", "max", "median",
+                             "n")
+        col1_vals <- trimws(tolower(as.character(raw[, 1])))
+        col1_vals <- col1_vals[nzchar(col1_vals)]
+        if (length(col1_vals) > 0 &&
+            mean(col1_vals %in% WIDE_STAT_NAMES) >= 0.5) {
+          message("  wide-format codebook detected — transposing: ", src)
+          var_names  <- as.character(raw[1, ])          # variable names (header row)
+          stat_names <- as.character(raw[, 1])           # stat names (first column)
+          traw <- as.data.frame(t(raw[, -1, drop = FALSE]),
+                                stringsAsFactors = FALSE)
+          names(traw) <- stat_names[-1]
+          traw <- cbind(data.frame(variable = var_names[-1],
+                                   stringsAsFactors = FALSE),
+                        traw)
+          raw <- traw
+          rownames(raw) <- NULL
+        }
+
         # Scan rows 1..CODEBOOK_HEADER_LOOKAHEAD for a row whose values match the
         # expected codebook column patterns.
         header_row <- NA_integer_
@@ -935,6 +970,39 @@ match_column_labels <- function(columns_df, codebook_vars_df,
   if (is.null(columns_df)       || nrow(columns_df) == 0)       return(make_empty())
 
   norm_col <- normalize_varname(columns_df$column_name)
+
+  # ── Range variable expansion ──────────────────────────────────────────────────
+  # Codebooks sometimes describe item batteries with range notation, e.g. "V1–V10".
+  # Expand such entries to individual rows before matching so each variable gets a
+  # label.  Unicode en-dash (\u2013) and ASCII hyphen are both accepted.
+  range_pat  <- "^([A-Za-z]*)\\s*(\\d+)\\s*[-\u2013]\\s*(\\d+)$"
+  range_rows <- grep(range_pat, codebook_vars_df$codebook_variable, perl = TRUE)
+  if (length(range_rows) > 0) {
+    expanded <- Filter(Negate(is.null), lapply(range_rows, function(i) {
+      parts <- regmatches(
+        codebook_vars_df$codebook_variable[i],
+        regexec(range_pat, codebook_vars_df$codebook_variable[i], perl = TRUE)
+      )[[1]]
+      prefix <- parts[2]
+      start  <- as.integer(parts[3])
+      end    <- as.integer(parts[4])
+      if (is.na(start) || is.na(end) || start > end) return(NULL)
+      row <- codebook_vars_df[i, , drop = FALSE]
+      do.call(rbind, lapply(seq(start, end), function(n) {
+        row$codebook_variable <- paste0(prefix, n)
+        row
+      }))
+    }))
+    if (length(expanded) > 0) {
+      codebook_vars_df <- rbind(
+        codebook_vars_df[-range_rows, , drop = FALSE],
+        do.call(rbind, expanded)
+      )
+      message("  range expansion: ", length(range_rows), " range(s) → ",
+              nrow(do.call(rbind, expanded)), " individual variable(s)")
+    }
+  }
+
   norm_var <- normalize_varname(codebook_vars_df$codebook_variable)
 
   n                <- nrow(columns_df)
@@ -1237,104 +1305,46 @@ extract_plain_text <- function(path) {
   )
 }
 
-# ── Aggregate series detection ────────────────────────────────────────────────
+# ── Aggregate extension grouping ──────────────────────────────────────────────
 
-# detect_series: group files within an aggregate folder by common filename prefix.
+# group_aggregate_folder: group files within an aggregate folder by extension.
 #
-# Algorithm:
-#   1. Strip extension, then strip trailing variable suffix starting at the first
-#      separator ([-_]) before a segment that contains at least one digit.
-#   2. Files whose prefix equals their full stem (no suffix stripped), or whose
-#      prefix is < 2 characters, are singletons → returned for Phase 1 processing.
-#   3. Files whose stripped prefix appears only once (no pair) → singletons.
-#   4. Remaining groups of 2+ files form series, each collapsing to one sub-sentinel.
-#   5. If no series are found, the entire folder becomes ONE fallback sentinel
-#      (is_series = FALSE), and singletons is returned empty.
+# Each distinct lowercase extension forms one group. Groups with >= AGGREGATE_THRESHOLD
+# members produce a sentinel (sample_paths sent to Phase 1 LLM; type/group propagated
+# to all members with type_source = "aggregate_llm"). Groups below the threshold are
+# routed individually to Phase 1 LLM classification.
 #
 # Arguments:
 #   rel_paths_in_folder  character vector of relative paths of all files in the
 #                        aggregate folder (may span subdirectories for participant
 #                        aggregates).
+#   folder               the aggregate folder name (stored on each group for
+#                        use as aggregate_folder in structure.csv)
 #
-# Returns a list:
-#   $sub_sentinels  data.frame with one row per series (or one fallback row):
-#                     prefix, file_count, dominant_ext,
-#                     sample_files (list-column of up to 5 basenames),
-#                     folder_members (list-column of all rel_paths in this series),
-#                     is_series (TRUE = detected series, FALSE = fallback sentinel)
-#   $singletons     character vector of rel_paths routed back to Phase 1
+# Returns a list of groups, each a list with:
+#   $ext               lowercase extension shared by all members (character)
+#   $folder            the aggregate folder name (character)
+#   $members           all rel_paths in this group (character vector)
+#   $sample_paths      up to 5 evenly-spaced paths from members (character vector)
+#   $route_individually TRUE if length(members) < AGGREGATE_THRESHOLD
 
-detect_series <- function(rel_paths_in_folder) {
-  if (length(rel_paths_in_folder) == 0) {
-    return(list(
-      sub_sentinels = data.frame(
-        prefix         = character(0),
-        file_count     = integer(0),
-        dominant_ext   = character(0),
-        sample_files   = I(list()),
-        folder_members = I(list()),
-        is_series      = logical(0),
-        stringsAsFactors = FALSE
-      ),
-      singletons = character(0)
-    ))
-  }
+group_aggregate_folder <- function(rel_paths_in_folder, folder = "") {
+  if (length(rel_paths_in_folder) == 0) return(list())
 
-  basenames <- basename(rel_paths_in_folder)
-  exts      <- tolower(tools::file_ext(basenames))
-  stems     <- tools::file_path_sans_ext(basenames)
+  exts        <- tolower(tools::file_ext(basename(rel_paths_in_folder)))
+  unique_exts <- unique(exts)
 
-  # Strip trailing variable suffix: first separator ([-_]) before a segment
-  # that contains at least one digit, through to end-of-string.
-  prefixes <- sub("([-_])[A-Za-z0-9]*[0-9][A-Za-z0-9]*([-_].*)?$", "",
-                  stems, perl = TRUE)
-
-  # Mark singletons: prefix unchanged (no suffix stripped) or too short
-  singleton_mask <- (prefixes == stems) | (nchar(prefixes) < 2L)
-
-  # Also mark as singleton if the prefix group would have only one member
-  if (any(!singleton_mask)) {
-    pfx_counts      <- table(prefixes[!singleton_mask])
-    lone_pfx        <- names(pfx_counts[pfx_counts < 2L])
-    singleton_mask  <- singleton_mask | (!singleton_mask & prefixes %in% lone_pfx)
-  }
-
-  series_prefixes <- unique(prefixes[!singleton_mask])
-
-  if (length(series_prefixes) == 0) {
-    # No series found — single fallback sentinel for the whole folder
-    dom_ext <- names(sort(table(exts), decreasing = TRUE))[1]
-    sub_sentinels <- data.frame(
-      prefix         = "mixed",
-      file_count     = length(rel_paths_in_folder),
-      dominant_ext   = dom_ext,
-      sample_files   = I(list(head(basenames, 5L))),
-      folder_members = I(list(rel_paths_in_folder)),
-      is_series      = FALSE,
-      stringsAsFactors = FALSE
-    )
-    return(list(sub_sentinels = sub_sentinels, singletons = character(0)))
-  }
-
-  # Build one sub-sentinel per detected series
-  sentinel_rows <- lapply(series_prefixes, function(pfx) {
-    idx         <- which(!singleton_mask & prefixes == pfx)
-    members     <- rel_paths_in_folder[idx]
-    member_exts <- exts[idx]
-    dom_ext     <- names(sort(table(member_exts), decreasing = TRUE))[1]
-    data.frame(
-      prefix         = pfx,
-      file_count     = length(members),
-      dominant_ext   = dom_ext,
-      sample_files   = I(list(head(basename(members), 5L))),
-      folder_members = I(list(members)),
-      is_series      = TRUE,
-      stringsAsFactors = FALSE
+  lapply(unique_exts, function(e) {
+    members <- rel_paths_in_folder[exts == e]
+    n       <- length(members)
+    srt     <- sort(members)
+    samp    <- if (n <= 5L) srt else srt[round(seq(1, n, length.out = 5L))]
+    list(
+      ext               = e,
+      folder            = folder,
+      members           = members,
+      sample_paths      = samp,
+      route_individually = n < AGGREGATE_THRESHOLD
     )
   })
-
-  list(
-    sub_sentinels = do.call(rbind, sentinel_rows),
-    singletons    = rel_paths_in_folder[singleton_mask]
-  )
 }

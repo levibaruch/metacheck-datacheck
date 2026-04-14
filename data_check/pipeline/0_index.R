@@ -24,7 +24,7 @@ if (!exists("DATA_DIR"))         DATA_DIR         <- "./data_check/data"
 if (!exists("OUTPUT_DIR"))       OUTPUT_DIR       <- "./data_check/outputs"
 if (!exists("PSYCHDS_OUT_DIR"))  PSYCHDS_OUT_DIR  <- "./data_check/psychds"
 if (!exists("GROUND_TRUTH_DIR")) GROUND_TRUTH_DIR <- "./data_check/ground_truth"
-ARCHIVE_EXTS    <- c("zip", "gz", "tar", "tgz", "bz2", "xz")
+ARCHIVE_EXTS    <- c("zip", "gz", "tar", "tgz", "bz2", "xz", "rar")
 # Extension-based type overrides applied after aggregate sentinel expansion.
 # Maps lowercase file extension → definitive type for unambiguous file kinds.
 # Extensions absent from this map (e.g. txt, dat, rda) retain the sentinel's
@@ -34,6 +34,7 @@ AGGREGATE_EXT_OVERRIDE <- c(
   do = "code", sps = "supplemental", jl = "code", js = "code", sh = "code",
   bash = "code", pl = "code", rb = "code", cpp = "code", c = "code",
   h = "code", java = "code", scala = "code", sql = "code",
+  inp = "code", ebs = "code", es = "code",   # Mplus scripts; E-Prime scripts
   exe = "software", app = "software", jar = "software",
   msi = "software", dmg = "software",
   jpg = "asset", jpeg = "asset", png = "asset", gif = "asset",
@@ -216,7 +217,7 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
   # Each sheet becomes <stem>_<sheet_name>.csv alongside the original.
   # The original xlsx/xls is then deleted so downstream sees only flat CSVs.
 
-  excel_paths <- files[tolower(tools::file_ext(files)) %in% c("xlsx", "xls")]
+  excel_paths <- files[tolower(tools::file_ext(files)) %in% c("xlsx", "xls", "xlsm")]
   if (length(excel_paths) > 0) {
     for (xl in excel_paths) {
       sheets <- tryCatch(readxl::excel_sheets(xl), error = function(e) {
@@ -385,95 +386,58 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
   }, logical(1))
 
   is_aggregate <- (top_dirs %in% flat_agg_dirs) | is_under_participant_agg
-  aggregate_df <- NULL
 
-  # ── 5b. Sub-group aggregate folders into series-based sub-sentinels ──────────
-  # Each aggregate folder is split by detect_series() into:
-  #   - Sub-sentinels (one per series, or one fallback sentinel for the whole folder)
-  #   - Singletons (unique files routed back to Phase 1 for individual classification)
-  # Descriptor strings carry the series prefix, file count, extension, and sample
-  # filenames so Phase 2 LLM can assign accurate group labels per condition.
+  # ── 5b. Group aggregate folders by extension ──────────────────────────────────
+  # Each aggregate folder is split into extension groups by group_aggregate_folder().
+  # Groups with >= AGGREGATE_THRESHOLD members → sample_paths join the Phase 1 LLM
+  # batch; the LLM result is propagated to all members (type_source = "aggregate_llm").
+  # Groups with < AGGREGATE_THRESHOLD members → members routed individually to Phase 1.
 
   extra_singletons <- character(0)
+  agg_groups_list  <- list()  # all extension groups that produce sentinels
 
   if (any(is_aggregate)) {
-    agg_all <- lapply(agg_dirs, function(d) {
+    for (d in agg_dirs) {
       if (d %in% participant_agg_dirs) {
         members <- rel_paths[startsWith(rel_paths, paste0(d, "/"))]
       } else {
         members <- rel_paths[top_dirs == d]
       }
 
-      sr <- detect_series(members)
+      groups <- group_aggregate_folder(members, folder = d)
 
-      # Singletons from this folder go to Phase 1
-      extra_singletons <<- c(extra_singletons, sr$singletons)
-
-      if (nrow(sr$sub_sentinels) == 0) return(NULL)
-
-      ss <- sr$sub_sentinels
-
-      # FR-011: diagnostic per aggregate folder
-      message("── Aggregate folder: ", d, " → ", nrow(ss), " sub-sentinel(s)")
-      for (j in seq_len(nrow(ss))) {
-        message(sprintf("   [%s] %d files, .%s",
-                        ss$prefix[j], ss$file_count[j], ss$dominant_ext[j]))
-      }
-
-      # Build descriptor strings (sent to Phase 2 LLM)
-      ss$descriptor <- vapply(seq_len(nrow(ss)), function(j) {
-        samp <- paste(ss$sample_files[[j]], collapse = ", ")
-        if (ss$is_series[j]) {
-          sprintf('%s/[prefix: "%s", %d files, .%s, samples: %s]',
-                  d, ss$prefix[j], ss$file_count[j], ss$dominant_ext[j], samp)
+      for (g in groups) {
+        if (g$route_individually) {
+          extra_singletons <- c(extra_singletons, g$members)
         } else {
-          sprintf('%s/[mixed, %d files, .%s, samples: %s]',
-                  d, ss$file_count[j], ss$dominant_ext[j], samp)
+          agg_groups_list <- c(agg_groups_list, list(g))
+          message(sprintf("── Aggregate folder: %s / .%s → %d files, %d sample path(s)",
+                          d, g$ext, length(g$members), length(g$sample_paths)))
         }
-      }, character(1))
-
-      ss$folder <- d
-      ss
-    })
-
-    agg_list <- Filter(Negate(is.null), agg_all)
-
-    if (length(agg_list) > 0) {
-      aggregate_df <- do.call(rbind, agg_list)
-
-      # Pre-resolve type for sub-sentinels whose dominant extension is unambiguous
-      ext_resolved <- AGGREGATE_EXT_OVERRIDE[tolower(aggregate_df$dominant_ext)]
-      aggregate_df$type_resolved <- ifelse(!is.na(ext_resolved),
-                                           ext_resolved, NA_character_)
+      }
     }
   }
 
+  # Collect sample paths from all sentinel extension groups
+  agg_sample_paths <- unlist(lapply(agg_groups_list, `[[`, "sample_paths"),
+                             use.names = FALSE)
+
   non_agg_relpaths <- c(rel_paths[!is_aggregate], extra_singletons)
 
-  # Phase 1 paths: non-aggregate files + singletons routed back from aggregates.
-  # Phase 2 paths: aggregate sub-sentinels (descriptor strings).
-  # If aggregate_df is NULL (no aggregate dirs found), only Phase 1 runs.
-  llm_paths <- non_agg_relpaths
+  # Phase 1 LLM batch: non-aggregate files + singletons + aggregate sample paths.
+  # No Phase 2 — all paths classified in a single pass.
+  llm_paths <- c(non_agg_relpaths, agg_sample_paths)
 
-  # ── 6. LLM: understand repository structure (two-phase classification) ────────
-  #
-  # Phase 1: classify all non-aggregate paths (llm_paths = non_agg_relpaths).
-  # Phase 2: classify aggregate sub-sentinels using Phase 1 results as context.
-  # Both phases count toward MAX_LLM_CALLS.
+  # ── 6. LLM: classify all paths in a single phase ────────────────────────────
 
   if (!is_dv) t_download <- proc.time()[["elapsed"]] - t_download_start
 
-  t_llm_start <- proc.time()[["elapsed"]]
-  MAX_LLM_CALLS  <- 10
-  n_phase1_calls <- ceiling(length(llm_paths) / LLM_BATCH_SIZE)
-  n_phase2_calls <- if (!is.null(aggregate_df) && nrow(aggregate_df) > 0)
-                      ceiling(nrow(aggregate_df) / LLM_BATCH_SIZE) else 0L
-  n_llm_calls    <- n_phase1_calls + n_phase2_calls
+  t_llm_start   <- proc.time()[["elapsed"]]
+  MAX_LLM_CALLS <- 10
+  n_llm_calls   <- ceiling(length(llm_paths) / LLM_BATCH_SIZE)
   if (!FULL_RUN && n_llm_calls > MAX_LLM_CALLS) {
-    stop("too_large: ", length(llm_paths), " non-aggregate paths + ",
-         if (!is.null(aggregate_df)) nrow(aggregate_df) else 0L,
-         " sub-sentinels would require ", n_llm_calls, " LLM calls (max ",
-         MAX_LLM_CALLS, ")")
+    stop("too_large: ", length(llm_paths), " paths would require ",
+         n_llm_calls, " LLM calls (max ", MAX_LLM_CALLS, ")")
   }
 
   # Build a compact experiment-map summary from prior batch results to pass as
@@ -756,6 +720,28 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
                                 classify_data_format(file_df$ext),
                                 NA_character_)
 
+  # ── PDF-from-Rmd fallback ────────────────────────────────────────────────────
+  # After classification and group assignment, override type to "output" for PDFs
+  # that share a stem with a same-directory .Rmd / .qmd / .tex source file.
+  # Runs post-classification so group context is already resolved.
+  pdf_idx <- which(file_df$ext == "pdf")
+  if (length(pdf_idx) > 0) {
+    src_keys <- paste0(tools::file_path_sans_ext(file_df$rel_path), "\x01",
+                       file_df$ext)
+    src_exts <- c("rmd", "qmd", "tex")
+    for (.i in pdf_idx) {
+      stem    <- tools::file_path_sans_ext(file_df$rel_path[.i])
+      has_src <- any(paste0(stem, "\x01", src_exts) %in% src_keys)
+      if (has_src) {
+        file_df$type[.i]        <- "output"
+        file_df$type_source[.i] <- "rmd_pair_rule"
+        file_df$data_format[.i] <- NA_character_
+        message("  PDF compiled from source — type set to output: ",
+                file_df$filename[.i])
+      }
+    }
+  }
+
   # ── 8. Save structure ────────────────────────────────────────────────────────
 
   structure_out <- file.path(eff_dir, "structure.csv")
@@ -832,6 +818,29 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
     }
     if (!is.na(file_mb)) .read_state$mb_read <- .read_state$mb_read + file_mb
 
+    # ── Qualtrics ImportId detection ─────────────────────────────────────────────
+    # Detect by scanning the first 3 data rows for the ImportId pattern and strip.
+    if (nrow(df) >= 2) {
+      import_row <- NA_integer_
+      for (.qi in seq_len(min(3L, nrow(df)))) {
+        if (any(grepl("^\\{.*ImportId", as.character(df[.qi, ]), perl = TRUE))) {
+          import_row <- .qi
+          break
+        }
+      }
+      if (!is.na(import_row)) {
+        keep_after <- seq(import_row + 1L, nrow(df))
+        if (length(keep_after) == 0) {
+          message("  skipping (Qualtrics file with only header rows): ", basename(path))
+          return(NULL)
+        }
+        df <- df[keep_after, , drop = FALSE]
+        rownames(df) <- NULL
+        message("  Qualtrics header rows stripped (ImportId at row ",
+                import_row, "): ", basename(path))
+      }
+    }
+
     auto_named <- grepl("^\\.\\.\\.\\d+$", names(df))
 
     # ── Multi-level header recovery ────────────────────────────────────────────
@@ -894,6 +903,34 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
                   basename(path))
           return(NULL)
         }
+      }
+    }
+
+    # ── V\d+ auto-header detection ───────────────────────────────────────────────
+    # base R names headerless CSVs V1, V2, V3, ... — the same issue as ...N above
+    # but for CSV files read without column headers.  Apply the same sub-header
+    # lookahead; no group-label extraction (V-names carry no prefix context).
+    v_named <- grepl("^V\\d+$", names(df))
+    if (mean(v_named) > 0.5) {
+      v_sub_header_row <- NULL
+      for (.vi in seq_len(min(MULTILEVEL_HEADER_LOOKAHEAD, nrow(df)))) {
+        candidate <- as.character(df[.vi, ])
+        has_real  <- any(!is.na(candidate) & nzchar(candidate) &
+                         candidate != "NA" &
+                         !grepl("^V\\d+$", candidate) &
+                         is.na(suppressWarnings(as.numeric(candidate))))
+        if (has_real) { v_sub_header_row <- .vi; break }
+      }
+      if (!is.null(v_sub_header_row)) {
+        new_names           <- as.character(df[v_sub_header_row, ])
+        fallback            <- is.na(new_names) | !nzchar(new_names)
+        new_names[fallback] <- names(df)[fallback]
+        new_names           <- make.unique(new_names)
+        df                  <- df[(v_sub_header_row + 1):nrow(df), , drop = FALSE]
+        names(df)           <- new_names
+        col_header_group    <- rep(NA_character_, ncol(df))
+        message("  V\\d+ header resolved (used row ", v_sub_header_row + 1,
+                " as header): ", basename(path))
       }
     }
 
