@@ -13,8 +13,6 @@ source("data_check/pipeline/helper.R")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-
-
 if (!exists("PSYCHDS_OUT_DIR")) {
   PSYCHDS_OUT_DIR <- "./data_check/psychds"
 }
@@ -687,8 +685,6 @@ convert_study <- function(paper_id, study_group, files_df, cols_df, labels_df,
     ext      <- tolower(tools::file_ext(filename))
     is_raw   <- if ("data_granularity" %in% names(row))
                   identical(row$data_granularity, "individual")
-                else
-                  isTRUE(row$is_raw)  # backward compat with old structure.csv
     gt_val   <- isTRUE(row$ground_truth_validated)
 
     # Size check (FR-013, US4/T028)
@@ -887,7 +883,8 @@ convert_study <- function(paper_id, study_group, files_df, cols_df, labels_df,
 }
 
 # ── Internal: expand_sentinel_rows ───────────────────────────────────────────
-
+# NOTE: the sentinel row is terrible since the sentinel approach in general sucks right now. 
+# TODO fix this together with the new way of handling sentinel/aggreagtes/
 # For sentinel rows (is_sentinel == TRUE), replace with individual files on disk.
 expand_sentinel_rows <- function(structure_df) {
   non_sentinel <- structure_df[!isTRUE(structure_df$is_sentinel) &

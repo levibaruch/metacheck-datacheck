@@ -811,7 +811,7 @@ parse_codebook <- function(path) {
         df <- haven::read_sav(path)
         .extract_haven_labels(df, src)
       },
-      dta = {
+      dta = { # TODO same as sav, so why seperate?
         df <- haven::read_dta(path)
         .extract_haven_labels(df, src)
       },
@@ -835,7 +835,7 @@ parse_codebook <- function(path) {
   rich_lines <- if (is.character(result) && !is.data.frame(result)) result else NULL
 
   if (!is.null(result) && is.data.frame(result) && nrow(result) > 0) {
-    result$group        <- .infer_group(result$group)
+    result$group        <- .infer_group(result$group) # TODO what the fuck is the point of this? Why would we need to infer group here when we know it upstream?
     result$parse_method <- "structured"
     return(result)
   }
@@ -893,7 +893,7 @@ parse_codebook <- function(path) {
         group             = .infer_group(ec),
         stringsAsFactors  = FALSE
       )
-    }, error = function(e) NULL)
+    }, error = function(e) NULL) # TODO try agian if it fails! This just hopes it goes well the first time
   }
 
   result <- do.call(rbind, Filter(Negate(is.null), all_vars))
