@@ -265,7 +265,7 @@ RAW_EXTENSIONS     <- c(
   # Generic binary
   "bin", "raw",
   # Document formats — never tabular; guard against LLM mis-classifying a PDF as data
-  "pdf"
+  "pdf", "docx", "doc", "odt", "rtf"
 )
 
 # Takes a character vector of lowercase file extensions (no leading dot).
