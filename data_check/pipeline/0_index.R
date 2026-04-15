@@ -566,120 +566,60 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
       last_entry       <- batch_result[nrow(batch_result), ]
     }
   }
-  n_phase1_batches <- if (!is.null(structure_parsed)) max(structure_parsed$prompt_nr) else 0L
 
-  # ── Phase 2: classify aggregate sub-sentinels with Phase 1 context ─────────
-
-  sentinel_parsed <- NULL
-
-  if (!is.null(aggregate_df) && nrow(aggregate_df) > 0) {
-    sentinel_type_map <- list()
-    s_chunks <- split(aggregate_df$descriptor,
-                      ceiling(seq_along(aggregate_df$descriptor) / LLM_BATCH_SIZE))
-
-    for (i in seq_along(s_chunks)) {
-      pfx          <- build_sentinel_summary(experiment_map, type_map)
-      if (i > 1) {
-        pfx        <- build_sentinel_summary(experiment_map,
-                                             update_type_map(type_map, sentinel_parsed))
-      }
-      batch_result <- llm_batch(
-        paths         = s_chunks[[i]],
-        system_prompt = SENTINEL_PROMPT,
-        user_prefix   = pfx,
-        key_col       = "path",
-        extra_cols    = c("type", "group"),
-        fallback_vals = list(type = "other", group = "shared"),
-        sentinel_cols = "type",
-        paper_id      = paper_id,
-        stage_name    = "file-type Phase 2"
-      )
-      batch_result$prompt_nr <- n_phase1_batches + i
-      sentinel_parsed   <- rbind(sentinel_parsed, batch_result)
-      sentinel_type_map <- update_type_map(sentinel_type_map, batch_result)
-    }
-
-    # Merge Phase 2 results back into aggregate_df; apply type_resolved override
-    agg_merged <- merge(aggregate_df, sentinel_parsed,
-                        by.x = "descriptor", by.y = "path", all.x = TRUE)
-    # Where type was already resolved by extension rule, use that; else use LLM type
-    agg_merged$final_type  <- ifelse(!is.na(agg_merged$type_resolved),
-                                     agg_merged$type_resolved,
-                                     agg_merged$type)
-    agg_merged$final_group <- agg_merged$group
-    agg_merged$final_type[is.na(agg_merged$final_type)]   <- "other"
-    agg_merged$final_group[is.na(agg_merged$final_group)] <- "shared"
-
-    # FR-011: post-Phase-2 diagnostic per aggregate folder
-    for (d in unique(agg_merged$folder)) {
-      rows <- agg_merged[agg_merged$folder == d, ]
-      message(sprintf("── Aggregate [%s]: Phase 2 assigned %d sub-sentinel(s)",
-                      d, nrow(rows)))
-      for (j in seq_len(nrow(rows))) {
-        message(sprintf("   [%s] type=%s, group=%s",
-                        rows$prefix[j], rows$final_type[j], rows$final_group[j]))
-      }
-    }
-
-    aggregate_df <- agg_merged
-  }
-
-  # ── 7. Expand sub-sentinels back to individual files ─────────────────────────
-  # Each sub-sentinel row in aggregate_df carries:
-  #   folder_members (list-col) — rel_paths of all files in this series
-  #   final_type / final_group  — Phase 2 LLM result + extension override applied
-  #   type_resolved             — non-NA when extension override was used for type
-  #   is_series                 — TRUE = detected series, FALSE = fallback sentinel
+  # ── 7. Propagate Phase 1 results to aggregate group members ──────────────────
+  # For each extension group where route_individually = FALSE (sample_paths sent to
+  # Phase 1 LLM), look up the LLM type/group assignment from a sample path and
+  # propagate to all member files. Members get type_source = "aggregate_llm" and
+  # data_granularity = "combined" (files treated as atomic units, not expanded).
   #
-  # Per-file type resolution:
-  #   1. Check per-file extension against AGGREGATE_EXT_OVERRIDE.
-  #   2. If override hit → type = override value, type_source = "extension_rule"
-  #   3. If no override  → type = sub-sentinel's final_type (Phase 2 LLM result),
-  #                         type_source = "sentinel_llm"
-  #
-  # data_granularity:
-  #   "individual" — file is part of a detected series (is_series = TRUE)
-  #   "combined"   — fallback sentinel file (is_series = FALSE) or Phase 1 file
+  # Groups with route_individually = TRUE are already in non_agg_relpaths and
+  # classified individually in Phase 1 (type_source = "llm").
 
-  if (!is.null(aggregate_df) && nrow(aggregate_df) > 0) {
-    agg_expanded <- lapply(seq_len(nrow(aggregate_df)), function(i) {
-      row     <- aggregate_df[i, ]
-      members <- row$folder_members[[1]]
-      if (length(members) == 0) {
-        warning("Sub-sentinel has no members: ", row$folder, "/", row$prefix)
-        return(NULL)
+  agg_expanded <- list()
+
+  if (length(agg_groups_list) > 0) {
+    for (grp in agg_groups_list) {
+      # Look up the first sample path in structure_parsed to get type/group
+      sample_idx <- match(grp$sample_paths[1], structure_parsed$path)
+      if (is.na(sample_idx)) {
+        warning("Sample path not found in Phase 1 results: ", grp$sample_paths[1])
+        next
       }
 
-      # Per-file extension override
-      member_exts  <- tolower(tools::file_ext(members))
-      ext_override <- AGGREGATE_EXT_OVERRIDE[member_exts]
-      has_override <- !is.na(ext_override)
+      sample_row <- structure_parsed[sample_idx, ]
+      agg_type   <- sample_row$type
+      agg_group  <- sample_row$group
 
-      types       <- ifelse(has_override, ext_override, row$final_type)
-      type_source <- ifelse(has_override, "extension_rule", "sentinel_llm")
+      # Handle NA defaults from Phase 1
+      if (is.na(agg_type))   agg_type   <- "other"
+      if (is.na(agg_group))  agg_group  <- "shared"
 
-      # data_granularity: "individual" for detected-series members; "combined" for fallback
-      is_data        <- types == "data"
-      data_gran      <- ifelse(is_data & isTRUE(row$is_series), "individual",
-                               ifelse(is_data, "combined", NA_character_))
-
-      data.frame(
-        path             = file.path(norm_base, members),
-        rel_path         = members,
-        type             = types,
-        group            = row$final_group,
-        aggregate_folder = row$folder,
-        type_source      = type_source,
-        data_granularity = data_gran,
+      # Create a row for each member file
+      member_df <- data.frame(
+        path             = file.path(norm_base, grp$members),
+        rel_path         = grp$members,
+        type             = agg_type,
+        group            = agg_group,
+        aggregate_folder = grp$folder,
+        type_source      = "aggregate_llm",
+        data_granularity = ifelse(agg_type == "data", "combined", NA_character_),
         is_sentinel      = FALSE,
-        prompt_nr        = if ("prompt_nr" %in% names(row)) row$prompt_nr else NA_integer_,
+        prompt_nr        = sample_row$prompt_nr,
         stringsAsFactors = FALSE
       )
-    })
-    agg_expanded_df <- do.call(rbind, Filter(Negate(is.null), agg_expanded))
-  } else {
-    agg_expanded_df <- NULL
+
+      agg_expanded <- c(agg_expanded, list(member_df))
+
+      message(sprintf("── Aggregate [%s/.%s]: %d files → type=%s, group=%s",
+                      grp$folder, grp$ext, length(grp$members), agg_type, agg_group))
+    }
   }
+
+  agg_expanded_df <- if (length(agg_expanded) > 0)
+    do.call(rbind, agg_expanded)
+  else
+    NULL
 
   # Phase 1 rows: all non-aggregate files + singletons routed from aggregates.
   # data_granularity = "combined" for data files; NA for non-data.
