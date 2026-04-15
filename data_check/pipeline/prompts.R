@@ -379,7 +379,8 @@ other        : no research relevance — OS metadata (.DS_Store, Thumbs.db),
               filename label: "s1_data.txt" → ex1, "s2a_results.csv" → ex2a,
                               "S3_raw.csv" → ex3, "Experiment4_data.sav" → ex4
             A label in the filename alone is sufficient — the folder does not
-            also need to carry it.
+            also need to carry it. Both Study, Experiment, S and such can be used as
+            explicit experiment indicators.
             Preserve letter suffixes exactly: s3a → ex3a, Exp2b → ex2b.
             NOT indicators: run numbers ("run1"), subject IDs ("subject-2294"),
             version numbers, ordinal levels ("1st_Level"), sequential file counts

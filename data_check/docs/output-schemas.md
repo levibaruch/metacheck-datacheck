@@ -31,6 +31,7 @@ One row per file discovered in the paper's OSF repository.
 | `"llm"` | Type assigned by Phase 1 LLM classification of an individual (non-aggregate) file |
 | `"extension_rule"` | Type assigned by `AGGREGATE_EXT_OVERRIDE` lookup applied per-file after aggregate expansion |
 | `"sentinel_llm"` | Type inherited from Phase 2 sentinel LLM classification for files with ambiguous extensions |
+| `"rmd_pair_rule"` | Type overridden to `"output"` because the PDF shares its stem with a `.Rmd`/`.qmd`/`.tex` source file in the same directory (post-classification fallback) |
 
 ### File Types
 
