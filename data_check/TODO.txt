@@ -8,112 +8,70 @@ Open items are marked  [ ]
 Done items are marked  [x]
 
 
-Mistakes found during the ground truth annotations, or unclarities found during annotation
+
+collumns that are send to LLM should have date as a selector
+────────────────────────────────────────────────────────────────────────
+  0956797614535937
+  software: Python online task scripts — code vs software boundary
+────────────────────────────────────────────────────────────────────────
+  [v2] running...
+── Unpacking 1 archive(s)
+  skipping (already unpacked): online_materials.zip
+Querying LLM [==================================================] 1/1 00:00:05
+
+── File inventory ──────────────────────────────
+
+  code / shared  coden / shared   data / shared readme / shared 
+             25               1               2               1 
+
+sanatize outputs! (coden)
 
 
 
-617706706 -> interesting codebook
+================================================================================
+TODOs found in pipeline/ source files
+================================================================================
 
-RDATA should be exploded like XLSX when there is data detected (so nog gplot)
+── pipeline/helper.R ───────────────────────────────────────────────────────────
 
-Raw video files are data when they are raw data. 
+  Line 849 (read_data_head — dta branch):
+    # TODO same as sav, so why seperate?
+    → dta and sav branches appear to share identical logic; consider merging.
 
-Example video of data -> sup
+  Line 873 (read_data_head — structured parse):
+    # TODO what the fuck is the point of this? Why would we need to infer group
+    # here when we know it upstream?
+    → .infer_group() called after structured parse despite group being known
+      before this point; review whether call is redundant or masking a bug.
 
-PIcture of materials used -> Supplemental
+  Line 931 (read_data_head — error handler):
+    # TODO try agian if it fails! This just hopes it goes well the first time
+    → error = function(e) NULL silently swallows failures with no retry;
+      add at least one retry or surface the error to the caller.
 
-SQL -> Raw Combined data
+── pipeline/3_psychds_convert.R ────────────────────────────────────────────────
 
-615586560 Gini calculator. How do I detemine this?I would say output?
- 
- .log is often raw data
+  Line 623 (copy_files_to_psychds — subdir resolution):
+    # TODO Currently this works poorrly; since datafiles are not included here,
+    # most types fall back to documentation. I think at least
+    → TYPE_TO_SUBDIR lookup incomplete — data file types missing, causing
+      incorrect fallback to "documentation" subdir; expand TYPE_TO_SUBDIR or
+      add explicit data-type handling before the fallback.
 
- Transcript of an interview is raw individual data
+  Line 887 (expand_sentinel_rows):
+    # TODO fix this together with the new way of handling sentinel/aggreagtes/
+    → expand_sentinel_rows() needs to be reconciled with the updated
+      sentinel/aggregate handling approach (see sentinel rewrite work).
 
- 614557697 Example of paper where group membership of files i simpossible wihtout reading the paper
+================================================================================
+Feature 035: Sentinel Aggregate Redesign — Known Improvements Needed
+================================================================================
 
- 615569002 -> FMRI data that I dont understand. I think its raw data?
-
- 616649660(6 or 1): .inp is code, since it does analytics
-
- +616684682: A JASP is hard. They are both data and code in one. I really dont know how to deal with this for now
-
- 622119391 screenshots of a survey are assets
-
- 617724426 Model files in .txt, do we onsider these models outputs or code? They are written in code
-
- 617729817 archive.txt -> data
-
-617735807 Figure that is actually an asset (asset used as figure! Therefore LLM labelled as output). I dont think this is fixable; just author Mistakes
-
-617730814
-      Impossible to know dataset grouping from dataname
-
-Continious versus ordinal detection is not so good. Revisit these rules.
-
-Qualtrics detectoin not working always. Too many times I see the "ImportID in the first variable. Maybe detect it for more collumns in more depth? Seems to happen when 
-there is no qualtrics in the first one, but in second one. Maybe check N=x rows?
-
-618774252 is a good paper with a hard codebook
-
-Maybe we can detect used measurement tools in the paper?
-
-617734827 Intermediate results that are furhter processed are data
-
-Many autors kindly supply the same dataset in .sav and other forms. This is nice, but will require an equivilance test later down the line; we have a lot of duplicate data
-The same problem comes across when there is data and "cleaned" data. What do we keep? Maybe both?
-
-.RAR is not currently extracted.
-
-Recheck all .ebs or .es (i cnanot remember why)
-
-615595607 If the first row is just automatically generated headers, or stuff like (V1, V2, V3), make sure that other rows are checked as dataset headers. Maybe check if there is some thing like (if row x is all text for only this row, that is probably not part of the dataset)
-
-616647518 xslx is not exploded
-
-617730892 pdf was somehow detected as a tabular dataset?
-
-
-6177372128 configs are software
-
-We need to handle long versus wide datasets somehow. This isnt working
-
-617617659 many .mat files
-
-618773095 .jasp files
-
-619831964 .pdf not labelled as output while it has the same name as a .rmd file. Probably should make a rule for that. Rdata with glmermod = output
-
-61984421 wide ipv long codebook
-
-315593071 ехперимент 1, but folders contians both: GT = shared
-
-0956797615581(5)5 -> datasets in both wide and long. Gmmmm How do we handle this> What is best for our use case?
-
-615605818 -> correlational additional study I consider shared
-
-615619206 dupliate datasets
-
-616654131 is data from another experiment supplemental or data? I consider it data, since it is used in the experiment/analysis, right?
-
-616685770 Pretest = experiment, not pilot
-
-617753562 .xlsm not exploded
-
-619869505(?) ,rar not extracted
-
-620929302 how do we handle dummy files and datasets? other?
-
-620941840 datasets sometimes have codebook variables that explain not per variable, but per gooiing (v1-10 means x). This happens more often than I want
-
-614553944 codebook describes 5 non-labelled collumns frommt he raw data (so no headers; explanation given). I think this is such bad manners that we should account for it
-
-614564191 many different individual tabular files might give an opportunity to algorithmically concate these into a combined file; aka check if all collumns are the same with simular valuepypes, concenate and add aprticipant nr (maybe file name) as a collumn. This would be a great way to use the currently under/not- utilized individual datasets
-
-615569002 Skipped, I dont understand these fmri datasets, so cannot judge the correctness of the predictions right now.
-
-There exist R packages to read in .mat ifles. We should do this for the ones we have; especially considering the previous concation logic for individual files that are tabular
-
-Many csv codebooks include more than one collumns (include means, explanations.) we need to find a way to keep this information but still parse them correctly and preferably without LLM extraciton.
-Also LLM css extraction seems to take long. maybe first convert it more properly than we do now? 
-
+  [DEV] data_granularity detection: individual vs combined distinction needs improvement
+    → Current: Detects participant series as "individual" via >AGGREGATE_THRESHOLD numeric
+      subdirs (e.g., "1/", "2/", "3/" containing per-participant data)
+    → Problem: Original series detection logic "very bad and missed many detections"
+    → Impact: Downstream data intake relies on this distinction for per-participant handling
+    → Action: Review and improve detect_series() logic in helper.R; consider pattern
+      matching on file naming (e.g., "participant_01_data.csv") and folder structure
+      heuristics beyond just numeric dir names. Document detection rationale in spec.
