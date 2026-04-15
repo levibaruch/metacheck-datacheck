@@ -75,3 +75,137 @@ Feature 035: Sentinel Aggregate Redesign — Known Improvements Needed
     → Action: Review and improve detect_series() logic in helper.R; consider pattern
       matching on file naming (e.g., "participant_01_data.csv") and folder structure
       heuristics beyond just numeric dir names. Document detection rationale in spec.
+
+
+TODO's during GT_coding
+
+## Part 1 — Classification Decisions Made During Annotation
+
+These are judgment calls you made while labelling that are not yet encoded in the pipeline. Each one is a candidate rule or prompt clarification.
+
+### `.jasp` files — data + code hybrid
+
+Papers `616684682` and `618773095`. A `.jasp` file is a ZIP archive containing both a data table and analysis scripts. There is no clean answer for the current taxonomy. Options:
+- Treat as `"data"` (it contains the dataset and is the primary input)
+- Treat as `"software"` (it is a self-contained analysis environment)
+- Unpack it (it's a ZIP) and classify contents individually
+
+For now, `.jasp` is unhandled by the override and the LLM tends to classify it inconsistently. This needs a spec decision before implementing. The note `618773095 .jasp files` records a second encounter — common enough to act on.
+
+---
+
+### Intermediate results that are further processed → data, not output
+
+Paper `617734827`. Files that are outputs of step 1 but inputs to step 2 (e.g., cleaned or scored intermediate CSVs) should be classified as `"data"`, not `"output"`. The LLM tends to call anything with "results" or "scores" in the name an output. The distinguishing signal is whether the file is read by downstream analysis scripts — but that requires cross-file relationship analysis which the pipeline does not currently do. For now, the prompt rule is: **if a file could plausibly be an analysis input, prefer `data` over `output`**.
+
+---
+
+### Model text files in `.txt` → code or output, not data
+
+Paper `617724426`. Text files containing Mplus model syntax, BUGS/JAGS/Stan code, or R model objects written as text are code. The pipeline currently routes unknown `.txt` files to the LLM, which handles this inconsistently. A filename heuristic (e.g., `model.txt`, `syntax.txt`) could route these to `"code"`. Text files named `archive.txt` (paper `617729817`) are data exports — the opposite case. Context matters here.
+
+---
+
+### Figure that is an asset but named like an output → unfixable author error
+
+Paper `617735807`. Some researchers commit the same file as both a manuscript figure (`Figure1.tif`) and a dataset supplement. The Phase 1 LLM labels figure-named image files as `"output"` rather than `"asset"` because it sees "Figure" in the name. **Your conclusion: this is an author error and not worth special-casing.** There is no automatic correction here — individual image files go straight through the LLM with no extension override to fall back on.
+
+---
+
+### Datasets in both wide and long format → keep both, note the duplication
+
+Paper `0956797615581(5)5`. When a researcher provides the same data in wide format (one row per participant, one column per trial) and long format (one row per trial), both files are legitimate data, but they are semantically duplicates. **Current pipeline behaviour:** the duplicate detection check compares filenames and byte sizes — wide vs. long will always differ in both. There is no current mechanism to flag semantic duplicates. For now, label both as `"data"`, note that the long format is preferred for psychDS conversion.
+
+---
+
+### "Correlational additional study" / additional studies in shared folder → shared
+
+Papers `315593071` and `615605818`. When a folder clearly contains files spanning multiple studies and there is no per-study subfolder structure, the correct `study_group` is `"shared"`. The pipeline's aggregate sentinel logic should already handle this, but it depends on the LLM correctly inferring from folder structure. When in doubt during GT annotation, assign `"shared"`.
+
+---
+
+### Config files → software
+
+Paper `6177372128`. Configuration files (`.cfg`, `.ini`, `.toml`, `.yaml`, `.json` used purely for settings) should be `"software"`, not `"other"` or `"code"`. Currently none of these extensions are in `AGGREGATE_EXT_OVERRIDE`. The LLM usually gets `.json` wrong (it often says `"data"` because JSON holds structured content). A targeted override or prompt example would help.
+
+---
+
+### Dummy / placeholder files → other
+
+Paper `620929302`. Some repositories include clearly synthetic or placeholder files (e.g., `example_data.csv`, `dummy.sav`, `test_output.csv`). The correct label is `"other"`. There is no current rule for this — the LLM typically labels them as `"data"`. A filename heuristic covering `"example"`, `"dummy"`, `"test"`, `"placeholder"` could catch these before the LLM.
+
+---
+
+## Part 2 — Pipeline Bugs Found During Annotation
+
+These are cases where the pipeline produced an incorrect or failing result that can be traced to a specific code path.
+
+---
+
+### `.mat` files not readable (MATLAB data)
+
+Paper `617617659`. Many `.mat` files exist in downloaded repos. `m = "code"` in `AGGREGATE_EXT_OVERRIDE` — but this is the extension for MATLAB **scripts**; `.mat` files are MATLAB **data files** and are not in the override at all, so they route to the LLM. More importantly, `read_data_head()` has no `.mat` branch, so column extraction always returns `NULL` for these files.
+
+The `R.matlab` package can read `.mat` files. It is not currently installed. **Fix direction (two steps):** (1) add `mat = "data"` to `AGGREGATE_EXT_OVERRIDE`, and (2) add a `.mat` branch to `read_data_head()` using `R.matlab::readMat()` — but only after confirming the package is available (or making it optional with `tryCatch`).
+
+---
+
+### Codebook describes columns by position, not name
+
+Paper `614553944`. Some codebooks list variables as "column 1", "column 2" without providing actual column names. The codebook label pipeline (`2_codebook_label.R`) matches on variable names — positional references will never match. The coverage score for such papers will always be 0% for all columns. No current mitigation. Long-term fix: detect positional reference patterns in the codebook and attempt position-based matching.
+
+---
+
+## Part 3 — Ideas for Improvement
+
+These are feature ideas triggered by annotation experience.
+
+---
+
+### Detect used measurement tools from the paper XML
+
+The XML metadata extracted from papers often contains method section text that names standardised instruments (BDI, PHQ-9, STAI, NEO-FFI, etc.). If we detect instrument names in the paper metadata, we could (a) improve column type labelling (Likert scales on a known instrument = ordinal), and (b) improve codebook coverage scores by knowing which variables to expect.
+
+---
+
+### Concatenate individual tabular files with matching schemas
+
+Paper `614564191`. When a paper stores one CSV per participant (a common pattern in longitudinal and reaction-time studies), the pipeline currently indexes them as `n_individual` files but does not concatenate them. If all files in a detected aggregate series have identical column names and compatible value types, they could be stacked into a single wide CSV with an added `source_file` column (participant identifier derived from the filename). This would make them usable for codebook matching and psychDS conversion. This directly leverages the `data_granularity = "individual"` classification that already exists.
+
+---
+
+### Read `.mat` files using `R.matlab`
+
+As noted in the bug section — with the `R.matlab` package, MATLAB `.mat` files can be read into R data frames. Many psychology labs (especially those using SPM for fMRI or EEGLab for EEG) store behavioural data alongside neuroimaging data in `.mat` format. This would unlock column extraction for a non-trivial fraction of the corpus.
+
+---
+
+### Better CSV codebook parsing: convert before LLM extraction
+
+Many CSV codebooks include multiple columns per variable (label, description, mean, SD, allowed values). The current approach sends the raw CSV text to the LLM, which is slow and produces inconsistent output. A pre-processing step that: (1) detects the "variable name" column via header name matching (`variable`, `var`, `name`, `colname`), (2) extracts only that column plus a candidate "label" column, and (3) passes a cleaned two-column table to the LLM — would reduce token usage and improve consistency. The user noted this step already takes noticeably long.
+
+---
+
+### Flag format duplicates (same data in `.sav` and `.csv`)
+
+The current duplicate detection (`0_index.R`) compares filename + byte size. Multi-format duplicates (same dataset in `.sav`, `.csv`, `.dta`) have different byte sizes and will never match. A downstream deduplication step could compare column names + basic statistics (n, mean of first numeric column) across files in the same directory to detect semantically equivalent datasets. For now, both files are indexed and labelled `"data"` — which inflates `n_combined` counts and leads to double-labelled columns in `columns.csv`.
+
+---
+
+
+### Revisit continuous vs. ordinal classification rules
+
+The current rule in `classify_col_type_rules()` (`helper.R:342`):
+- `> 20 unique integer values` → continuous (no LLM)
+- `3–20 unique integer values` → LLM (ordinal vs. continuous)
+- `= 2 unique values` → binary
+
+The 20-value cutoff is arbitrary. A 7-point Likert scale will correctly route to the LLM. But a count variable (number of errors, 0–15) will also route to the LLM and get labelled ordinal because it looks like a rating scale. The column **name** is the stronger signal here — `n_errors`, `rt_ms`, `score_raw` are continuous regardless of unique value count. Consider adding name-based rules to `classify_col_type_rules()` before the unique-value check, similar to how the ID rule fires first.
+
+---
+
+### Interesting reference papers for codebook testing
+
+- `617706706` — interesting/complex codebook structure (edge case for codebook labelling)
+- `618774252` — hard codebook (good stress test for extraction)
+- `615569002` — fMRI dataset (raw neuroimaging; unclear taxonomy; skipped during annotation)
