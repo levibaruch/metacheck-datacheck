@@ -199,7 +199,7 @@ Echo every path exactly. Output ONLY the JSON array.'
  
 # AB TEST v1 (rule-based, 2026-04) — kept for comparison
 
-STRUCTURE_PROMPT_OLD <- 'You are classifying files in a psychology research data repository.
+STRUCTURE_PROMPT_v1 <- 'You are classifying files in a psychology research data repository.
 You will receive a file tree. For each path return a JSON array (same order).
 Each element: {"path": "<exact path>", "type": "<type>", "group": "<group>"}
 
@@ -351,7 +351,12 @@ code         : source file or notebook whose purpose is to generate analyses —
                scripts, syntax files, notebooks (.Rmd, .qmd, .ipynb)
 software     : program or config file whose purpose is to run the experiment —
                task runners, stimulus apps, compiled binaries (.exe, .app,
-               .jar, .msi, .dmg), experiment parameter/config files
+               .jar, .msi, .dmg), experiment parameter/config files.
+               Task/experiment runtime files → always software: E-Prime
+               (.ebs2, .es2, .wndpos, .edat, .edat2, .emrg), PsychoPy
+               (.psyexp), OpenSesame (.opensesame, .osexp).
+               Documents (.pdf, .docx, .doc, .txt, .rtf) are NEVER software,
+               even when inside experiment or task folders.
 output       : artefact produced by executing a script — rendered notebooks,
                figures, graphs, log files, SPSS output (.spv), computational
                byproducts. When provenance is ambiguous → supplemental.
@@ -374,7 +379,8 @@ other        : no research relevance — OS metadata (.DS_Store, Thumbs.db),
               filename label: "s1_data.txt" → ex1, "s2a_results.csv" → ex2a,
                               "S3_raw.csv" → ex3, "Experiment4_data.sav" → ex4
             A label in the filename alone is sufficient — the folder does not
-            also need to carry it.
+            also need to carry it. Both Study, Experiment, S and such can be used as
+            explicit experiment indicators.
             Preserve letter suffixes exactly: s3a → ex3a, Exp2b → ex2b.
             NOT indicators: run numbers ("run1"), subject IDs ("subject-2294"),
             version numbers, ordinal levels ("1st_Level"), sequential file counts
@@ -422,7 +428,9 @@ Tabular files (.csv, .xlsx, .sav, .dta, .tsv, .dat):
 code vs software — use purpose, not extension:
   analysis / modelling / cleaning scripts → code
   experiment runners, stimulus apps, compiled binaries → software
-  config file serving experiment/task context → software
+  config file serving experiment/task context → software ONLY if it is a
+    structured config format (.yaml, .yml, .json, .cfg, .ini, .toml) or a
+    binary runtime file. Human-authored text documents are NOT config files.
   config file with "analysis", "model", or "params" in name → code
 
 "Supplemental Experiment N" / "Supplemental Study N" folders → group "shared"
