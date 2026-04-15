@@ -19,7 +19,7 @@ One row per file discovered in the paper's OSF repository.
 | `type_source` | character | How `type` was determined — see [Type Source Values](#type-source-values) |
 | `group` | character | Experiment/study group — see [Groups](#groups) |
 | `aggregate_folder` | character \| NA | Relative path of the aggregate folder this file was expanded from; `NA` for non-aggregate files |
-| `data_granularity` | character \| NA | `"combined"` (single atomic unit) or `NA` (non-data file); all data files treated as combined units. |
+| `data_granularity` | character \| NA | `"individual"` (part of detected participant series with numeric subfolder structure), `"combined"` (atomic unit in flat aggregate or non-series), or `NA` (non-data file) |
 | `prompt_nr` | integer \| NA | LLM prompt batch index used to classify this file; `NA` for rule-classified files |
 | `data_format` | character \| NA | Sub-classification for `type = "data"` rows: `"tabular"` (column-extractable) or `"raw"` (binary recordings, matrices, media); `NA` for all non-data rows. Determined by file extension via `classify_data_format()` — never set by the LLM. Unknown extensions fall back to `"tabular"`. |
 

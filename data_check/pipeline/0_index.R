@@ -408,12 +408,23 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
       groups <- group_aggregate_folder(members, folder = d)
 
       for (g in groups) {
+        # Detect if this group is a participant series (numeric subfolder structure)
+        is_series <- FALSE
+        if (d %in% participant_agg_dirs) {
+          # In participant aggregate dirs, check if members follow numeric pattern
+          basenames <- basename(dirname(g$members))
+          n_numeric <- sum(grepl("^\\d+$", basenames))
+          is_series <- (n_numeric > (length(g$members) / 2))  # majority numeric subdirs
+        }
+        g$is_series <- is_series
+
         if (g$route_individually) {
           extra_singletons <- c(extra_singletons, g$members)
         } else {
           agg_groups_list <- c(agg_groups_list, list(g))
-          message(sprintf("── Aggregate folder: %s / .%s → %d files, %d sample path(s)",
-                          d, g$ext, length(g$members), length(g$sample_paths)))
+          message(sprintf("── Aggregate folder: %s / .%s → %d files, %d sample path(s)%s",
+                          d, g$ext, length(g$members), length(g$sample_paths),
+                          if (is_series) " [series]" else ""))
         }
       }
     }
@@ -571,8 +582,11 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
   # ── 7. Propagate Phase 1 results to aggregate group members ──────────────────
   # For each extension group where route_individually = FALSE (sample_paths sent to
   # Phase 1 LLM), look up the LLM type/group assignment from a sample path and
-  # propagate to all member files. Members get type_source = "aggregate_llm" and
-  # data_granularity = "combined" (files treated as atomic units, not expanded).
+  # propagate to all member files. Members get type_source = "aggregate_llm".
+  #
+  # data_granularity distinction:
+  #   "individual" — detected participant series (per-participant data files)
+  #   "combined"   — flat aggregate or non-series files
   #
   # Groups with route_individually = TRUE are already in non_agg_relpaths and
   # classified individually in Phase 1 (type_source = "llm").
@@ -596,6 +610,12 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
       if (is.na(agg_type))   agg_type   <- "other"
       if (is.na(agg_group))  agg_group  <- "shared"
 
+      # data_granularity: "individual" for detected participant series, "combined" otherwise
+      is_series      <- isTRUE(grp$is_series)
+      is_data        <- agg_type == "data"
+      data_gran      <- ifelse(is_data & is_series, "individual",
+                               ifelse(is_data, "combined", NA_character_))
+
       # Create a row for each member file
       member_df <- data.frame(
         path             = file.path(norm_base, grp$members),
@@ -604,7 +624,7 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
         group            = agg_group,
         aggregate_folder = grp$folder,
         type_source      = "aggregate_llm",
-        data_granularity = ifelse(agg_type == "data", "combined", NA_character_),
+        data_granularity = data_gran,
         is_sentinel      = FALSE,
         prompt_nr        = sample_row$prompt_nr,
         stringsAsFactors = FALSE
@@ -612,8 +632,9 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL) {
 
       agg_expanded <- c(agg_expanded, list(member_df))
 
-      message(sprintf("── Aggregate [%s/.%s]: %d files → type=%s, group=%s",
-                      grp$folder, grp$ext, length(grp$members), agg_type, agg_group))
+      message(sprintf("── Aggregate [%s/.%s]: %d files → type=%s, group=%s%s",
+                      grp$folder, grp$ext, length(grp$members), agg_type, agg_group,
+                      if (is_series && is_data) " [individual]" else ""))
     }
   }
 
