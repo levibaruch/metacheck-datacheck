@@ -27,8 +27,9 @@ if (!exists("GROUND_TRUTH_DIR")) GROUND_TRUTH_DIR <- "./data_check/ground_truth"
 ARCHIVE_EXTS    <- c("zip", "gz", "tar", "tgz", "bz2", "xz", "rar")
 # Extension-based type overrides applied after aggregate sentinel expansion.
 # Maps lowercase file extension → definitive type for unambiguous file kinds.
-# Extensions absent from this map (e.g. txt, dat, rda) retain the sentinel's
-# inherited type unchanged.
+# AGGREGATE_EXT_OVERRIDE: Extension-based fallback classification rules. Currently
+# validation-only; not applied to final output. Retained for post-LLM logging.
+# Extensions absent from this map (e.g. txt, dat, rda) would fall back unchanged.
 AGGREGATE_EXT_OVERRIDE <- c(
   r = "code", rmd = "code", qmd = "code", py = "code", m = "code",
   do = "code", sps = "supplemental", jl = "code", js = "code", sh = "code",
