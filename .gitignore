@@ -34,6 +34,13 @@ data_check/psychds/*/
 data_check/psychds/*.csv
 !data_check/psychds/EXPERIMENTAL.txt
 data_check/results
+data_check/ab_test/results/
+data_check/ab_test/ab_log.csv
+data_check/ab_test/ab_report_*.md
+data_check/download_progress.csv
+playground.ipynb
+quality_report_*.md
+results/quality_report_*.md
 
 
 ./output
