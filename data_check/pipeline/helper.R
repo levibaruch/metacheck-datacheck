@@ -495,9 +495,7 @@ llm_batch <- function(paths, system_prompt, user_prefix, key_col, extra_cols,
     success       <- FALSE
 
     while (TRUE) {
-      # Respect an optional temperature override set by callers (e.g. the sweep runner).
-      # Falls back to the model's default when the option is not set.
-      llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()
+      llm_params <- list(temperature = LLM_TEMPERATURE, think = LLM_THINK_LEVEL)
       raw        <- llm(system_prompt = system_prompt, text = chunk_input, params = llm_params)
       last_raw   <- raw
 
@@ -960,7 +958,7 @@ parse_codebook <- function(path) {
 
   for (i in seq_len(max_calls)) {
     chunk_text <- paste(chunks[[i]], collapse = "\n")
-    llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()
+    llm_params <- list(temperature = LLM_TEMPERATURE, think = LLM_THINK_LEVEL)
     raw <- tryCatch(
       llm(system_prompt = CODEBOOK_PARSE_PROMPT,
           text = paste0("Extract all variable definitions from this codebook text:\n\n",
@@ -1140,7 +1138,7 @@ match_column_labels <- function(columns_df, codebook_vars_df,
       })
       prompt_body <- paste0("Variables to check:\n",
                             jsonlite::toJSON(batch_input, auto_unbox = TRUE))
-      llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()
+      llm_params <- list(temperature = LLM_TEMPERATURE, think = LLM_THINK_LEVEL)
       merge_resp <- tryCatch(
         llm(system_prompt = label_merge_prompt, text = prompt_body, params = llm_params),
         error = function(e) {
@@ -1203,7 +1201,7 @@ match_column_labels <- function(columns_df, codebook_vars_df,
         "\n\nCodebook variables (unmatched):\n", var_list
       )
 
-      llm_params <- if (!is.null(getOption("llm_temperature"))) list(temperature = getOption("llm_temperature")) else list()
+      llm_params <- list(temperature = LLM_TEMPERATURE, think = LLM_THINK_LEVEL)
       llm_resp <- tryCatch(
         llm(system_prompt = column_match_prompt, text = prompt_body, params = llm_params),
         error = function(e) {

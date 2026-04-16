@@ -38,7 +38,7 @@ if (!exists("LLM_SENTINEL_VAL")) LLM_SENTINEL_VAL <- "llm_error"
 
 N_DATA_READ     <- 5
 MAX_TOTAL_DATA_MB <- 10 * 1024  # 10 GB total data read cap per paper across all data files
-MAX_FILE_READ_SEC <- 5 * 60    # per-file read timeout (seconds); file is skipped if exceeded
+MAX_FILE_READ_SEC <- 1 * 60    # per-file read timeout (seconds); file is skipped if exceeded
 
 VALID_FILE_TYPES <- c(
   "data", "codebook", "code", "software", "output",
@@ -999,14 +999,22 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL, structu
                        file_df$ext)
     src_exts <- c("rmd", "qmd", "tex")
     for (.i in pdf_idx) {
-      stem    <- tools::file_path_sans_ext(file_df$rel_path[.i])
-      has_src <- any(paste0(stem, "\x01", src_exts) %in% src_keys)
-      if (has_src) {
+      stem         <- tools::file_path_sans_ext(file_df$rel_path[.i])
+      matched_keys <- paste0(stem, "\x01", src_exts)
+      src_idx      <- which(src_keys %in% matched_keys)
+      if (length(src_idx) > 0) {
         file_df$type[.i]        <- "output"
         file_df$type_source[.i] <- "rmd_pair_rule"
         file_df$data_format[.i] <- NA_character_
         message("  PDF compiled from source — type set to output: ",
                 file_df$filename[.i])
+        for (.j in src_idx) {
+          file_df$type[.j]        <- "code"
+          file_df$type_source[.j] <- "rmd_pair_rule"
+          file_df$data_format[.j] <- NA_character_
+          message("  Source file for compiled PDF — type set to code: ",
+                  file_df$filename[.j])
+        }
       }
     }
   }
@@ -1052,7 +1060,9 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL, structu
   .read_state$limit_hit <- FALSE
 
   extract_column_info <- function(path, rel_path, group) {
+    message(sprintf("Processing: %s (group: %s)", basename(path), group))
     file_mb <- file.info(path)$size / 1048576
+    message(sprintf("  file size: %.1f MB", file_mb))
     if (!is.na(file_mb) && file_mb > MAX_FILE_MB) {
       message("  skipping (too large: ", round(file_mb), " MB): ", basename(path))
       return(NULL)
@@ -1402,7 +1412,7 @@ run_index <- function(paper_id = NA, download = TRUE, output_dir = NULL, structu
   write.csv(
     file_df[, c("paper_id", "path", "rel_path", "filename", "ext",
                 "type", "type_source", "group", "aggregate_folder",
-                "data_granularity", "granularity_source", "is_sentinel", "prompt_nr", "data_format")],
+                "data_granularity", "granularity_source", "prompt_nr", "data_format")],
     structure_out, row.names = FALSE
   )
   message("── Saved structure → ", structure_out)
