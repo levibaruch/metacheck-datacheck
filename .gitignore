@@ -41,7 +41,8 @@ data_check/download_progress.csv
 playground.ipynb
 quality_report_*.md
 results/quality_report_*.md
-
+data_check/tests/outputs/
+data_check/tests/psychds/
 
 ./output
 data_check/_old/
